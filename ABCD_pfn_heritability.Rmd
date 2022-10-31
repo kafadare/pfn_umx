@@ -1,0 +1,1832 @@
+---
+title: "ABCD_pfn_heritability"
+author: "Eren Kafadar"
+date: '2022-04-24'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+require(OpenMx)
+require(umx)
+require(tidyverse)
+require(magrittr)
+require(data.table)
+require(doParallel) 
+library(ggseg)
+require(ggseg)
+require(ggplot2)
+require(dendextend)
+require(pheatmap)
+require(ggcorrplot)
+require(ciftiTools)
+require(ggpubr)
+require(ggpmisc)
+require(pals)
+ciftiTools.setOption('wb_path', '/Applications/workbench')     
+#require(qdap) #doesn't load
+# install.packages("remotes")
+#remotes::install_github("ggseg/ggsegExtra")
+remotes::install_github("LCBC-UiO/ggsegYeo2011")
+require(ggsegYeo2011)
+source("~/Documents/pfn_scripts/all_fcts.R")
+setwd("/Users/ekafadar/Documents/ABCD_pfn_umx_update")
+```
+TO DO
+1- add to umx_df function to calc h2s within fct
+2- make pfn specific fct to add modality stuff to umx_df (maybe a part of umx_df fct, maybe separate fct?)
+3- Visualize bestModel for univar analyses (with different covars)
+4- look at bivariate results w/ & w/o covars. Vis bivar stuff??
+5- cluster on rG bivar stuff. there is a paper with k = 3 clusters (from Boulder group, check that paper out)
+6- look at effect of sex on PFN size
+7- see which bivar pairs for which model might not have rA calculated. Run those to look at the variance matrix to dx the issue.
+8- look at heritability of PG in univar model & with each PFN. Hessian error #5 with PGs
+9- MM and FF groups univar heritability models, compare models with mixed modeling (only same sex twins?), run UMX SexLimitation model
+
+Soft Parcellation umx
+DONE1- get Matlab working on virtual desktop interface
+DONE2- write matlab script to get the proper data structure from u x v matrices with each subject in a separate file:
+  *figure out if we wanna create df separately, or whether we can create it simultaneously as we run the umx?
+DONE3- write R script to run umx on each vertex_pfn. incorporate umx_modelCompare, umx_df, make_dscalar. Save umx_dfs as a big dataframe for reference, one DF for each PFN. rows  will be vertices. Save one make_dscalar map for each PFN.
+  *figure out how to match vertices on a xifti file ?
+  * covs for vertex heritability?
+4- figure out how to run this in parallel :)
+
+Common pathway? Independent pathway?
+What's up with the soft parcellation ...
+Maybe read up on some cubic docs & esp // stuff to run soft-parcellation vertex-level heritability stuff
+#Working w/ Sample TwinData
+```{r}
+require(umx)
+data(twinData)
+twinData= umx_scale_wide_twin_data(data=twinData, varsToScale= "wt", sep="")
+twinData$cohort1 = twinData$cohort2 =twinData$part
+mzData = twinData[twinData$zygosity %in% "MZFF",]
+dzData = twinData[twinData$zygosity %in% "DZFF",]
+
+m1 = umxACE(selDVs = 'ht', dzData = dzData, mzData = mzData, sep = '')
+m1_cov1 = umxACE(selDVs = 'ht', selCovs = c("age"), sep = "", dzData = dzData, mzData = mzData)
+m1_cov2 = umxACE(selDVs = 'ht', selCovs = c("age","cohort"), sep = "", dzData = dzData, mzData = mzData)
+
+```
+
+
+##assigning custom umx fcts to pkg env & to og fct calls
+(this is like kind of important, you can't keep capturing the output LOL - esp because doesn't work w/ parallelization.)
+YOU CAN DO THIS :)
+```{r}
+   # assign custom fcts to the umx environment to access hidden umx fcts
+   source("all_fcts.R")
+    environment(umxSummaryACE_EK) <- asNamespace("umx")
+    assignInNamespace("umxSummary", umxSummaryACE_EK, ns = "umx")
+    assignInNamespace("umxSummaryACE", umxSummaryACE_EK, ns = "umx")
+    
+    environment(umxReduceACE_EK) <- asNamespace("umx")
+    assignInNamespace("umxReduceACE", umxReduceACE_EK, ns = "umx")
+
+    environment(umxCompare_EK) <- asNamespace("umx")
+    assignInNamespace("umxCompare", umxCompare_EK, ns = "umx")
+
+     # environment(umxACE_EK) <- asNamespace("umx")
+     # assignInNamespace("umxACE", umxACE_EK, ns = "umx")
+    
+    # environment(xmu_twin_print_means_EK) <- asNamespace("umx")
+    # assignInNamespace("xmu_twin_print_means", xmu_twin_print_means_EK, ns = "umx")
+    # 
+    # # this line is to assign og umx fcts to themselves again :)
+     #assignInNamespace("umxACE", umxACE, ns = "umx")
+     # assignInNamespace("umxSummaryACE", umxSummaryACE, ns = "umx")
+     # assignInNamespace("umxReduceACE", umxReduceACE, ns = "umx")
+     # assignInNamespace("umxCompare", umxCompare, ns = "umx")
+    # assignInNamespace("xmu_twin_print_means", xmu_twin_print_means, ns = "umx") 
+    # 
+    
+```
+
+
+# Get Data in Shape
+##defining vectors/templates
+Defining some useful vectors & loading xifti template for PFNs
+```{r}
+ABCD_twins_pfn <- read.csv("/Users/ekafadar/Documents/ABCD_pfn_umx_update/ABCD_twins_PFN.csv")
+#PFN stuff to help with analysis later
+names_pfn_17 <- rep('PFN', 17) %>% paste(seq(1:17), sep = "")
+names_pfn_7 <- c('VIS', 'MOT', 'DAN', 'VAN', 'FPN', 'AUD', 'DMN')
+names_pfn_all <- c(names_pfn_17,names_pfn_7)
+names_all <- c(names_pfn_all, "varexp")
+
+#define some vectors for later
+unimodal <- c("PFN6", "PFN10", "PFN2", "PFN4", "PFN11", "PFN13", "PFN16", "VIS", "MOT", "AUD")
+heteromodal <- c("PFN12", "PFN8","PFN1", "PFN17", "PFN15", "PFN3", "PFN9", "PFN7", "PFN14", "PFN5", "PFN16", "PFN17", "FPN", "DAN", "VAN", "DMN")
+pfn_name_color <- data.table(PFN = c(paste("PFN", 1:17, sep = "")), Name = c("DMN","MOT", "FPN", "MOT", "DAN", "VIS", "VAN", "DMN", "VAN", "VIS", "MOT", "DMN", "MOT", "DAN", "FPN", "AUD", "FPN"), Color = c("#CB94A9", "#AEBACA", "#DFCA8B", "#7793BB", "#83AD73", "#785397", "#B97FE7", "#AF576F","#A241EA","#5A2C7B","#5E78AF", "#833852", "#445489", "#517549", "#BD986A", "#5647A1", "#AA7C45"))
+pfn_name_color$Modality <- ifelse(pfn_name_color$PFN %in% unimodal, "UNI", ifelse(pfn_name_color$PFN %in% heteromodal, "HETERO", NA))
+pfn7 <- data.table(PFN = c("VIS", "MOT", "DAN", "VAN", "FPN", "AUD", "DMN"), Name = c("VIS", "MOT", "DAN", "VAN", "FPN", "AUD", "DMN"), Color = rep(NA, 7), Modality = c("UNI", "UNI", "HETERO", "HETERO", "HETERO", "UNI", "HETERO"))
+pfn_name_color = rbind(pfn_name_color, pfn7)
+
+SA_Axis <- c(6,10,2,13,11,4,5,16,14,15,9,8,12,3,1,7,17)
+SA_Axis <- paste("PFN", SA_Axis, sep = "")
+
+xii <- read_cifti(
+  "hardparcel_group.dscalar.nii", brainstructures="all", 
+  surfL_fname= NULL , surfR_fname= NULL,
+  resamp_res= NULL
+)
+#look at variance in network size & plot
+
+cv_pfns <- data.frame(matrix(ncol = 2, nrow = length(names_all) ) ) %>% setNames(c('PFN', 'coef_var'))
+
+for(i in seq(1:length(names_all))) {
+  var <- names_all[i] #variable names to select
+  cv_pfns[i,1] <- var
+  cv_pfns[i,2] <- sd(ABCD_twins_pfn[,var]) / mean(ABCD_twins_pfn[,var])* 100
+}
+
+
+
+zaixu.17colors <- c("#CB94A9",
+                    "#AEBACA",
+                    "#DFCA8B",
+                    "#7793BB",
+                    "#83AD73",
+                    "#785397",
+                    "#B97FE7",
+                    "#AF576F",
+                    "#A241EA",
+                    "#5A2C7B",
+                    "#5E78AF",
+                    "#833852",
+                    "#445489",
+                    "#517549",
+                    "#BD986A",
+                    "#5647A1",
+                    "#AA7C45"
+)
+```
+
+##data wrangling
+```{r, echo = FALSE}
+#load data & shape accordingly
+#ABCD_twins <- read.table('ABCD_release_2.0.1_r1.twin_table.20201109.txt', header = TRUE, sep = "", dec = ".")
+ABCD_twins_pfn$numTRs <- as.numeric(ABCD_twins_pfn$numTRs)
+ABCD_twins_pfn$sex <- as.factor(ABCD_twins_pfn$sex)# code F as 1 M as 0
+ABCD_twins_pfn <- rename(ABCD_twins_pfn, imgincl_ti1w_include = imgincl_t1w_include) %>% rename(., imgincl_ti2w_include = imgincl_t2w_include)
+#reshape twins data back to paired
+
+var_names_long <- names(ABCD_twins_pfn) 
+var_names_long <- var_names_long[-which(var_names_long %in% c("famID", "zygosity", "kinship", "X", "zyg"))]
+
+twins_pfn_wide <- umx_long2wide(ABCD_twins_pfn, famID = "famID", twinID = "twinno", vars2keep = var_names_long, zygosity = "zyg", passalong = c('zygosity', 'kinship', 'twinno'))
+
+twins_pfn_wide <- subset(twins_pfn_wide, !is.na(twins_pfn_wide$PFN1_T1) & !is.na(twins_pfn_wide$PFN1_T2)) #remove if one twin is missing PFN data
+
+rm(var_names_long)
+scale_vars <- c('age', 'meanFD', 'numTRs')
+#scale varexp to increase variance for umx to run  better. currently variance is < 0.1. This fct z-scores the data.
+twins_pfn_wide <- umx_scale_wide_twin_data(varsToScale = c(names_all, scale_vars), sep = "_T", twins_pfn_wide, twins = 1:2)
+twins_pfn_long <- umx_wide2long(twins_pfn_wide, sep = "_T")
+
+dz = twins_pfn_wide[twins_pfn_wide$zygosity == "DZ",]
+mz = twins_pfn_wide[twins_pfn_wide$zygosity == "MZ",]
+```
+##residualize covariates
+residualize mz and dz against covs sex, age, meanFD, and numTR
+After residualizing against numTRs, meanFD, sex and age, some PFNs are in the negatives ... oops. Will add 1000 to all of them, to make them all positive again ...
+```{r}
+DVs <- c(names_pfn_all, "varexp")
+Covs <- c("numTRs", "sex", "age", "meanFD")
+
+mz_res <- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "MZ")
+dz_res <- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "DZ")
+twins_res_long <- umx_residualize(var = DVs, covs = Covs, suffixes = NULL, data = ABCD_twins_pfn)
+```
+residualize only against sex & age
+```{r}
+DVs <- c(names_pfn_all, "varexp")
+Covs <- c("sex", "age")
+mz_res_sexage <- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "MZ")
+dz_res_sexage <- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "DZ")
+```
+residualize against motion, age, numTRs
+```{r}
+DVs <- c(names_pfn_all, "varexp")
+Covs <- c("meanFD", "numTRs", "age")
+mz_res_NOsex<- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "MZ")
+dz_res_NOsex <- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "DZ")
+```
+residualize only against age
+```{r}
+DVs <- c(names_pfn_all, "varexp")
+Covs <- c ("age")
+mz_res_age<- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "MZ")
+dz_res_age<- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "DZ")
+```
+residualize meanFD & numTR against sex & age
+```{r}
+DVs <- c("meanFD", "numTRs")
+Covs <- c ("age", "sex")
+mz_motion_res<- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "MZ")
+dz_motion_res<- umx_residualize(var = DVs, covs = Covs, suffixes = c("_T1", "_T2"), data = twins_pfn_wide) %>% subset(zygosity == "DZ")
+```
+
+##Check distribution of data
+non-normal PFNs: 1,3,4,5,6,8,12,14,15,17
+```{r}
+ABCD_twins_pfn %>%
+  pivot_longer(PFN1:PFN17, names_to = "PFN", values_to = "size") %>%
+  ggplot(aes(x = size)) +
+  geom_density() +
+  facet_wrap(vars(PFN), ncol = 3) +
+  labs(x = "Size", y = "Density")
+
+normality <- sapply(ABCD_twins_pfn[,grep("^PFN" ,names(ABCD_twins_pfn))], shapiro.test)
+View(normality[,which(as.numeric(normality$p.value) < 0.05)])
+#apply this to the PFNs, code from AAB, for non-normality. Apply to all PFNs
+#qnorm((rank(x,na.last="keep")-0.5)/sum(!is.na(x)))
+```
+
+
+
+#Running Models
+
+##run univariate models w  covariates using umxCompare
+- new umx version umx 4.15 runs smoothly with 1+ covs ... but is it correct??
+```{r}
+#umx_set_optimizer("NPSOL")
+umx_set_optimizer("SLSQP")
+selCovs <- c('age', 'meanFD', 'numTRs', 'sex')
+selCovs_SA <- c('age', 'sex')
+#selCovs <- c('age', 'meanFD', 'sex')
+#selCovs <- NULL
+selDVs <- c(names_pfn_all, "varexp")
+uni_umx_cov_list <- lapply(selDVs, umx_modelCompare, mz = mz, dz = dz, selCovs = selCovs, tryHard = "no", sep = "_T")
+uni_umx_nocov_list <- lapply(selDVs, umx_modelCompare, mz = mz, dz = dz, selCovs = NULL, tryHard = "no", sep = "_T")
+uni_umx_SA_list <- lapply(selDVs, umx_modelCompare, mz = mz, dz = dz, selCovs = selCovs_SA, tryHard = "no", sep = "_T")
+
+save('uni_umx_cov_list', file = paste("uni_umx_cov_list",format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+save('uni_umx_nocov_list', file = paste("uni_umx_nocov_list",format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+save('uni_umx_SA_list', file = paste("uni_umx_SA_list",format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+
+
+# pfn1_model <- umx_modelCompare( ROI_all = "PFN1", mz = mz, dz = dz, selCovs = selCovs, tryHard = "yes", optimizer = "SLSQP")
+# 
+# pfn1_CI <- umxACE(selDVs = "PFN1", selCovs = selCovs, mzData = mz, dzData = dz, sep = "_T", tryHard = "yes", intervals = T, optimizer = "NPSOL")
+# 
+# #CI Error : replacement has 1 row, data has 0
+# pfn2_CI <- umxACE(selDVs = "PFN5", selCovs = selCovs, mzData = mz, dzData = dz, sep = "_T", tryHard = "no", intervals = T, autoRun = T)
+
+```
+Run umx on meanFD and numTR
+```{r}
+meanFD_umx_df <- umx_modelCompare( ROI_all = "meanFD", mz = mz, dz = dz) %>% umx_df()
+numTR_umx_df <- umx_modelCompare( ROI_all = "numTRs", mz = mz, dz = dz) %>% umx_df()
+```
+get univar umx list into DF and create DF vars
+```{r}
+# load('uni_umx_cov_list.08_15_22.RData')
+# load('uni_umx_nocov_list.08_15_22.RData')
+#load('uni_umx_SA_list.08_15_22.RData')
+
+## NO COVS
+uni_pfns_df <- rbind(rbindlist(lapply(uni_umx_nocov_list, umx_df), fill = TRUE, use.names = TRUE)) %>% pfn_df()
+uni_pfns_df$pfn_no <- gsub("PFN", "", uni_pfns_df$ROI_1)
+uni_pfns_df$CoV <- cv_pfns[match(uni_pfns_df$ROI_1, cv_pfns$PFN, NA),"coef_var"]
+save(uni_pfns_df, file = paste("uni_df", format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+#haven't decided what correction for mult comparisons to use
+uni_heritable_names <- pull(subset(uni_pfns_df, ptim_AE_E < (0.05)), ROI_1)
+uni_heritable_df <- subset(uni_pfns_df, ROI_1 %in% uni_heritable_names)
+
+## COVS REG OUT
+
+#make list into dataframe
+uni_cov_pfns_df <- rbind(rbindlist(lapply(uni_umx_cov_list, umx_df), fill = TRUE, use.names = TRUE)) %>% pfn_df()
+save(uni_cov_pfns_df, file = paste("uni_cov_df", format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+#haven't decided what correction for mult comparisons to use
+uni_cov_heritable_names <- pull(subset(uni_cov_pfns_df, ptim_AE_E < (0.05)), ROI_1)
+uni_cov_heritable_df <- subset(uni_cov_pfns_df, ROI_1 %in% uni_cov_heritable_names)
+
+## COVS only sex & age reg out
+
+#make list into dataframe
+uni_covSA_pfns_df <- rbind(rbindlist(lapply(uni_umx_SA_list, umx_df), fill = TRUE, use.names = TRUE)) %>% pfn_df()
+save(uni_covSA_pfns_df, file = paste("uni_covSA_df", format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+#haven't decided what correction for mult comparisons to use
+uni_covSA_heritable_names <- pull(subset(uni_covSA_pfns_df, ptim_AE_E < (0.05)), ROI_1)
+uni_covSA_heritable_df <- subset(uni_covSA_pfns_df, ROI_1 %in% uni_cov_heritable_names)
+```
+
+
+
+##bivar model
+bivariate model & genetic corrs w all 17 PFNs + PG. On residuaolized and non-residualized data
+```{r}
+
+bivar_model <- umx_modelCompare(ROI_all = c("PFN1", "PFN2"), mz = mz, dz = dz, selCovs = selCovs, tryHard = "no")
+
+#selCovs <- c('age', 'sex', 'meanFD')
+shared_env <- c("c_r1c1", "c_r2c1", "c_r2c2")
+add_gen <- c("a_r1c1", "a_r2c1", "a_r2c2")
+#uni_heritable_17_PFNs <- uni_heritable_names[uni_heritable_names %in% names_pfn_17]
+#pairs_pfn_17_heritable <- combn(uni_heritable_17_PFNs, 2, simplify = FALSE)
+pairs_pfn_all <- combn(c(names_pfn_17, "varexp"), 2, simplify = FALSE)
+
+meanFD_pfn_pairs <- as.matrix(expand_grid(names_pfn_17, c("meanFD"))) %>% split(seq(nrow(.)), drop = T)
+#pairs_pfn2 <- pairs_pfn_17_heritable[which(sapply(pairs_pfn_17_heritable, "[[", 1) %in% c("PFN2"))]
+
+#pairs_pfn_test <- combn(c("PFN4", "PFN2"), 2, simplify = TRUE)
+
+pairs_pfn <- pairs_pfn_all
+
+num_cores <- detectCores() - 1  
+cl <- makeCluster(5, type="FORK")  
+registerDoParallel(cl)  
+
+#bivar_pfns_17 <- foreach(i=1:length(pairs_pfn)) %dopar% bivar_umx(pairs_pfn,"/Users/ekafadar/Documents/ABCD_pfn")
+#test <- umx_modelCompare(ROI_all = c("PFN2", "PFN4"), selCovs = selCovs, tryHard = "no", mz = mz, dz = dz)
+#test <- umx_modelCompare(ROI_all = c("PFN5", "PFN9"), selCovs = selCovs, tryHard = "yes", mz = mz, dz = dz)
+
+bivar_umx_list <- mclapply(pairs_pfn, umx_modelCompare, selCovs = selCovs, mz = mz, dz = dz, tryHard = "yes")
+save('bivar_umx_list', file = paste("bivar_umx_list",format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+
+
+bivar_meanFD_umx_list <- mclapply(meanFD_pfn_pairs, umx_modelCompare, mz = mz, dz = dz, tryHard = "yes")
+save('bivar_meanFD_umx_list', file = paste("bivar_meanFD_umx_list",format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+#bivar_meanFD_umx_list <- lapply(meanFD_pfn_pairs, umx_modelCompare, mz = mz, dz = dz, tryHard = "yes")
+
+stopCluster(cl)
+```
+
+Get list into DF, create vars
+```{r}
+#load('bivar_umx_list.07_24_22.RData')
+#load('bivar_cov_umx_list.07_24_22.RData')
+bivar_df <- read.csv("bivar_df.08_30_22.csv") %>% pfn_df()
+## NO COVs
+#bivar_df <- rbindlist(lapply(bivar_umx_list, umx_df), fill = TRUE) %>% pfn_df()
+
+#Get phenotypic correlation, p value, and confidence intervals
+bivar_df$rP  <- as.numeric(rep(NA,dim(bivar_df)[1]))
+bivar_df$rP_p  <- as.numeric(rep(NA,dim(bivar_df)[1]))
+bivar_df$rP_CIL  <- as.numeric(rep(NA,dim(bivar_df)[1]))
+bivar_df$rP_CIU <- as.numeric(rep(NA,dim(bivar_df)[1]))
+  
+for(i in seq(1:dim(bivar_df)[1])){
+  var1 <- bivar_df[[i,"ROI_1"]]
+  var2 <- bivar_df[[i,"ROI_2"]]
+  cor <- cor.test(ABCD_twins_pfn[,var1], ABCD_twins_pfn[,var2])
+  bivar_df[i,"rP"] <- cor[[4]]
+  bivar_df[i,"rP_p"] <- cor[[3]]
+  bivar_df[i,"rP_CIL"] <- cor[[9]][1]
+  bivar_df[i,"rP_CIU"] <- cor[[9]][2]
+  rm(var1)
+  rm(var2)
+  rm(cor)
+}
+
+#ratio of phenotypic corr explained by genetic corr
+bivar_df <- bivar_df %>% mutate( 
+  rGrP_AE = a_corr_AE/rP,
+  rGrP_ACE = a_corr_ACE/rP)
+
+#get significant bivars (figure out which p to use)
+# uni_heritable_names <- pull(subset(uni_pfns_df, ptim_AE_E < (0.05)), ROI)
+# uni_heritable_df <- subset(uni_pfns_df,ROI %in% uni_heritable_names)
+
+save(bivar_df, file = paste("bivar_df", format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+write.csv(bivar_df, file = paste("bivar_df", format(Sys.time(), "%m_%d_%y"),"csv", sep = "."))
+
+## COV REG OUT
+bivar_cov_df <- rbindlist(lapply(bivar_cov_umx_list, umx_df), fill = TRUE) %>% pfn_df()
+
+#Get phenotypic correlation, p value, and confidence intervals
+bivar_cov_df$rP  <- as.numeric(rep(NA,dim(bivar_cov_df)[1]))
+bivar_cov_df$rP_p  <- as.numeric(rep(NA,dim(bivar_cov_df)[1]))
+bivar_cov_df$rP_CIL  <- as.numeric(rep(NA,dim(bivar_cov_df)[1]))
+bivar_cov_df$rP_CIU <- as.numeric(rep(NA,dim(bivar_cov_df)[1]))
+
+for(i in seq(1:dim(bivar_cov_df)[1])){
+  var1 <- bivar_cov_df[[i,1]]
+  var2 <- bivar_cov_df[[i,2]]
+  cor <- cor.test(twins_res_long[,var1], twins_res_long[,var2])
+  bivar_cov_df[i,"rP"] <- cor[[4]]
+  bivar_cov_df[i,"rP_p"] <- cor[[3]]
+  bivar_cov_df[i,"rP_CIL"] <- cor[[9]][1]
+  bivar_cov_df[i,"rP_CIU"] <- cor[[9]][2]
+  rm(var1)
+  rm(var2)
+  rm(cor)
+}
+
+#ratio of phenotypic corr explained by genetic corr
+bivar_cov_df <- bivar_cov_df %>% mutate( 
+  rGrP_AE = a_corr_AE/rP,
+  rGrP_ACE = a_corr_ACE/rP)
+
+save(bivar_cov_df, file = paste("bivar_cov_df", format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+
+#get significant bivars (figure out which p to use)
+# uni_heritable_names <- pull(subset(uni_pfns_df, ptim_AE_E < (0.05)), ROI)
+# uni_heritable_df <- subset(uni_pfns_df,ROI %in% uni_heritable_names)
+```
+
+Bivar meanFD $ PFNsize
+```{r}
+#selCovs <- c('age', 'sex', 'meanFD')
+shared_env <- c("c_r1c1", "c_r2c1", "c_r2c2")
+add_gen <- c("a_r1c1", "a_r2c1", "a_r2c2")
+
+meanFD_pfn_pairs <- as.matrix(expand_grid(names_pfn_17, c("meanFD"))) %>% split(seq(nrow(.)), drop = T)
+
+num_cores <- detectCores() - 1  
+cl <- makeCluster(5, type="FORK")  
+registerDoParallel(cl)  
+
+bivar_meanFD_umx_list <- mclapply(meanFD_pfn_pairs, umx_modelCompare, mz = mz, dz = dz, tryHard = "yes")
+save('bivar_meanFD_umx_list', file = paste("bivar_meanFD_umx_list",format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+#bivar_meanFD_umx_list <- lapply(meanFD_pfn_pairs, umx_modelCompare, mz = mz, dz = dz, tryHard = "yes")
+stopCluster(cl)
+
+## DF
+bivar_meanFD_df <- rbindlist(lapply(bivar_meanFD_umx_list, umx_df), fill = TRUE) %>% pfn_df()
+
+#Get phenotypic correlation, p value, and confidence intervals
+bivar_meanFD_df$rP  <- as.numeric(rep(NA,dim(bivar_meanFD_df)[1]))
+bivar_meanFD_df$rP_p  <- as.numeric(rep(NA,dim(bivar_meanFD_df)[1]))
+bivar_meanFD_df$rP_CIL  <- as.numeric(rep(NA,dim(bivar_meanFD_df)[1]))
+bivar_meanFD_df$rP_CIU <- as.numeric(rep(NA,dim(bivar_meanFD_df)[1]))
+
+for(i in seq(1:dim(bivar_meanFD_df)[1])){
+  var1 <- bivar_meanFD_df[[i,1]]
+  var2 <- bivar_meanFD_df[[i,2]]
+  cor <- cor.test(ABCD_twins_pfn[,var1], ABCD_twins_pfn[,var2])
+  bivar_meanFD_df[i,"rP"] <- cor[[4]]
+  bivar_meanFD_df[i,"rP_p"] <- cor[[3]]
+  bivar_meanFD_df[i,"rP_CIL"] <- cor[[9]][1]
+  bivar_meanFD_df[i,"rP_CIU"] <- cor[[9]][2]
+  rm(var1)
+  rm(var2)
+  rm(cor)
+}
+
+#ratio of phenotypic corr explained by genetic corr
+bivar_meanFD_df <- bivar_meanFD_df %>% mutate( 
+  rGrP_AE = a_corr_AE/rP,
+  rGrP_ACE = a_corr_ACE/rP)
+bivar_meanFD_df$pfn_no <- gsub("PFN", "", bivar_meanFD_df$ROI_1)
+save(bivar_meanFD_df, file = paste("bivar_meanFD_df", format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+```
+##sexLim model
+run sexLim models
+umxSexLim(
+  name = "sexlim",
+  selDVs,
+  mzmData,
+  dzmData,
+  mzfData,
+  dzfData,
+  dzoData,
+  sep = NA,
+  A_or_C = c("A", "C"),
+  sexlim = c("Nonscalar", "Scalar", "Homogeneity"),
+ .libO dzAr = 0.5,
+  dzCr = 1,
+  autoRun = getOption("umx_auto_run"),
+  tryHard = c("no", "yes", "ordinal", "search"),
+  optimizer = NULL
+)
+Work on getting umxSexLim specific summary fct.
+Also figure out why the Hession code 5s (does it just not fit some phenotypes?)
+```{r}
+mzm <- subset(mz, sex_T1 == 0 & sex_T2 == 0)
+dzm <- subset(dz, sex_T1 == 0 & sex_T2 == 0)
+mzf <- subset(mz, sex_T1 == 1 & sex_T2 == 1)
+dzf <- subset(dz, sex_T1 == 1 & sex_T2 == 1)
+dzo <- subset(dz, sex_T1 != sex_T2)
+sex_model_test <- umxSexLim_EK(name = "sexlim", selDVs = "PFN4", mzm, dzm, mzf, dzf, dzo = NULL, sep = "_T", A_or_C = "A", sexlim = "Scalar")
+
+
+sexlim_umx_list <- lapply(names_all, umx_modelCompare, mz = mz, dz = dz) 
+save('uni_umx_list', file = paste("uni_umx_list",format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+uni_umx_cov_list <- lapply(selDVs, umx_modelCompare, mz = mz_res, dz = dz_res) 
+save('uni_umx_cov_list', file = paste("uni_umx_cov_list",format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+uni_umx_covSA_list <- lapply(selDVs, umx_modelCompare, mz = mz_res_sexage, dz = dz_res_sexage)
+save('uni_umx_covSA_list', file = paste("uni_umx_covSA_list",format(Sys.time(), "%m_%d_%y"),"RData", sep = "."))
+```
+
+
+
+
+
+
+
+
+
+
+#Analysis of Results
+##figure showing 17 networks group atlas
+```{r}
+# Read and visualize a CIFTI file -------------------------------
+# cifti_fname <- ciftiTools::ciftiTools.files()$cifti["dtseries"]
+# surfL_fname <- ciftiTools.files()$surf["left"]
+# surfR_fname <- ciftiTools.files()$surf["right"]
+
+xii_networks <- make_dscalar(xii = xii, df = uni_pfns_df, match_val = "pfn_no", map_val = "pfn_no", save = FALSE)
+colors_networks<- make_color_pal(zaixu.17colors, color_mode = "qualitative", zlim = 17)
+
+view_xifti_surface(xii_networks,colors = colors_networks, legend_embed = F, legend_alllevels = T, legend_ncol = 3, title = paste("17 Network Group Atlas"), fname = "networks_atlas")
+plot(NULL ,xaxt='n',yaxt='n',bty='n',ylab='',xlab='', xlim=0:1, ylim=0:1)
+legend("topleft", legend =c(1:17), pch=16, pt.cex=3, cex=1.5, bty='n',ncol = 2,
+    col = zaixu.17colors)
+mtext("Networks", at=0.12, cex=2)
+```
+
+## looking at variance, motion, sex, age
+CoV
+```{r}
+#look at variance in network size & plot
+#CoV
+t.test(CoV ~ Modality, uni_pfns_df)
+ggplot(uni_pfns_df[1:17,],aes(x = Modality, y = CoV, label = ROI_1)) + geom_boxplot() + geom_point() + geom_text()
+#t.test(CoV ~ modality, uni_heritable_df)
+
+load("uni_df.08_15_22.RData")
+zlim_cov= c(3.9,12.1)
+colors_cov <- make_color_pal("Reds", color_mode = "sequential", zlim = zlim_cov)
+xii_CoV <- make_dscalar(xii = xii, df = uni_pfns_df, match_val = "pfn_no", map_val = "CoV", save = FALSE)
+view_xifti_surface(xii_CoV, colors = colors_cov, legend_embed = TRUE, zlim = zlim_cov, title = paste("Coef of Var"), fname = "CoV")
+
+```
+MAD
+```{r}
+mad_pfn <- data.frame(matrix(ncol = 1, nrow = 0))
+colnames(mad_pfn) <- c('pfn', 'r_corr', 'p')
+for(i in seq(1:length(names_pfn_all))){
+  var <- names_pfn_all[i] #variable names to select
+  mad <- mad(ABCD_twins_pfn[,var])
+  mad_pfn[i,1] <- mad
+  rm(mad)
+}
+uni_pfns_df$mad_pfn <- mad_pfn
+
+xii_madpfn <- make_dscalar(xii = xii, df = uni_pfns_df, match_val = "pfn_no", map_val = "mad_pfn", save = FALSE)
+
+#plot meanFD-PFN size corr on brain surface
+zlim =  range(uni_pfns_df$mad_pfn)
+colors <- make_color_pal("Reds", color_mode = "sequential", zlim = zlim)
+view_xifti_surface(xii_madpfn, colors = colors, legend_embed = TRUE, zlim = zlim, title = paste("Median Absolute Deviation"))
+
+
+#violin plot of network variability
+pfns_long <- pivot_longer(data = twins_pfn_long, cols = names_pfn_17, names_to = "pfn_no", names_prefix = "PFN")
+ggplot(pfns_long) + geom_violin(aes(x = pfn_no, y = value, color = pfn_no, group = pfn_no)) + scale_color_discrete(zaixu.17colors)
+
+#ggplot with heritability
+ggplot(uni_pfns_df,aes(x = h2_AE, y = abs(corr_meanFD), label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "right", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3)+ ylim(0,0.5)
+
+summary(lm(h2_AE ~ mad_pfn, data = uni_pfns_df))
+cor.test(~ abs(corr_meanFD) + h2_AE, data=uni_pfns_df, method = "pearson")
+
+```
+motion
+```{r}
+cor_pfn_meanFD <- data.frame(matrix(ncol = 3, nrow = 0))
+colnames(cor_pfn_meanFD) <- c('pfn', 'r_corr', 'p')
+for(i in seq(1:length(names_pfn_all))){
+  var <- names_pfn_all[i] #variable names to select
+  cor <- cor.test(ABCD_twins_pfn[,var], ABCD_twins_pfn[,'meanFD'])
+  cor_pfn_meanFD[i,1] <- paste(var)
+  cor_pfn_meanFD[i,2] <- cor[[4]]
+  cor_pfn_meanFD[i,3] <- cor[[3]]
+  rm(var)
+  rm(cor)
+}
+
+ind <- which(cor_pfn_meanFD$p > (0.05/17))
+cor_pfn_meanFD$r_corr_sig <- cor_pfn_meanFD$r_corr
+cor_pfn_meanFD$r_corr_sig[ind] <- NA
+
+cor_pfn_meanFD$pfn_no <- gsub("PFN","", cor_pfn_meanFD$pfn)
+
+uni_pfns_df$corr_meanFD <- cor_pfn_meanFD[match(uni_pfns_df$pfn_no, cor_pfn_meanFD$pfn_no, NA), "r_corr"]
+
+xii_meanFDcorr <- make_dscalar(xii = xii, df = cor_pfn_meanFD, match_val = "pfn_no", map_val = "r_corr", save = FALSE)
+
+#plot meanFD-PFN size corr on brain surface
+zlim =  range(cor_pfn_meanFD$r_corr)
+colors <- make_color_pal("RdGy", color_mode = "diverging", zlim = zlim)
+view_xifti_surface(xii_meanFDcorr, colors = colors, legend_embed = TRUE, zlim = zlim, title = paste("meanFD ~ PFN size correlation"))
+
+
+#ggplot with heritability
+ggplot(uni_pfns_df,aes(x = h2_AE, y = abs(corr_meanFD), label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "right", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3)+ ylim(0,0.5)
+
+summary(lm(h2_AE ~ abs(corr_meanFD), data = uni_pfns_df))
+cor.test(~ abs(corr_meanFD) + h2_AE, data=uni_pfns_df, method = "pearson")
+
+```
+sex main fx on network size
+```{r}
+sex_fx <- data.frame(matrix(ncol = 8, nrow = 0))
+colnames(sex_fx) <- c('pfn', 't_val', 'df', 'p_val', 'CI_L', 'CI_U', 'lm_beta', 'r_sq')
+ABCD_twins_pfn_scaled <- umx_scale(ABCD_twins_pfn, varsToScale = names_all)
+M <- ABCD_twins_pfn_scaled[which(ABCD_twins_pfn$sex == 0),]
+FM <- ABCD_twins_pfn_scaled[which(ABCD_twins_pfn$sex == 1),]
+M <- ABCD_twins_pfn[which(ABCD_twins_pfn$sex == 0),]
+FM <- ABCD_twins_pfn[which(ABCD_twins_pfn$sex == 1),]
+for(i in seq(1:length(names_all))){
+  var <- names_all[i] #variable names to select
+  t <- t.test(M[,var], FM[,var])
+  lm <- summary(lm(ABCD_twins_pfn[,var] ~ ABCD_twins_pfn[,'sex']))
+  sex_fx[i,1] <- paste(var)
+  sex_fx[i,2] <- t[[1]]
+  sex_fx[i,3] <-t[[2]][[1]]
+  sex_fx[i,4] <- t[[3]]
+  sex_fx[i,5] <- t[[4]][1]
+  sex_fx[i,6] <-t[[4]][2]
+  sex_fx[i,7] <-lm[[4]][2]
+  sex_fx[i,8] <-lm[[8]]
+  rm(var)
+  rm(t)
+  rm(lm)
+}
+
+ind <- which(sex_fx$p_val > (0.05/17))
+sex_fx$beta_sig <- sex_fx$lm_beta
+sex_fx$beta_sig[ind] <- NA
+
+sex_fx$pfn_no <- gsub("PFN","", sex_fx$pfn)
+
+#uni_pfns_df$lm_sex_beta <- sex_fx[match(uni_pfns_df$pfn_no, sex_fx$pfn_no, NA), "lm_beta"]
+
+xii_sexfx <- make_dscalar(xii = xii, df = sex_fx, match_val = "pfn_no", map_val = "lm_beta", save = FALSE)
+xii_sexfx_sig <- make_dscalar(xii = xii, df = sex_fx, match_val = "pfn_no", map_val = "beta_sig", save = FALSE)
+
+#plot meanFD-PFN size corr on brain surface
+zlim_sx =  range(sex_fx$lm_beta)
+colors_sx <- make_color_pal(coolwarm(100), color_mode = "diverging", zlim = zlim_sx)
+view_xifti_surface(xii_sexfx, colors = colors_sx, zlim = zlim_sx, title = paste("sex ~ PFN size beta"))
+view_xifti_surface(xii_sexfx, colors = colors_sx, zlim = zlim_sx, title = paste("sex ~ PFN size beta"), fname = "sex beta PFN size")
+view_xifti_surface(xii_sexfx_sig, colors = colors_sx, zlim = zlim_sx, title = paste("sex ~ PFN size beta, sig"), fname = "sex sigbeta PFN size")
+
+#ggplot with heritability
+uni_pfns_df$sex_lm_beta <- sex_fx$lm_beta
+ggplot(uni_pfns_df,aes(x = h2_AE, y = sex_lm_beta, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "right", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3)+ ylim(-0.5,0.5)
+
+summary(lm(h2_AE ~ abs(corr_meanFD), data = uni_pfns_df))
+cor.test(~ abs(corr_meanFD) + h2_AE, data=uni_pfns_df, method = "pearson")
+
+summary(lm(ABCD_twins_pfn[,'PFN1'] ~ ABCD_twins_pfn[,'sex']))
+
+```
+age - didn't do this yet
+```{r}
+```
+
+## comparing snp heritability to twin heritability, snp heritability by modality
+```{r}
+# uni vs hetero
+snp_heritability <- read.csv("~/Documents/ABCD_pfn/abcd_pfn_h2_estimates.csv")
+snp_heritability$PFN <- paste('PFN', as.character(snp_heritability$PFN), sep = "")
+snp_heritability$modality <- ifelse(snp_heritability$PFN %in% unimodal, "UNI", ifelse(snp_heritability$PFN %in% heteromodal, "HETERO", NA))
+t.test(V.G..Vp ~ modality, snp_heritability)
+ggplot(snp_heritability,aes(x = modality, y = V.G..Vp, label = PFN)) + geom_boxplot() + geom_point()+ geom_label(aes(label = PFN), size = 2) + labs(y = "SNP h2")
+
+
+#compare with twin h2
+plot(snp_heritability$V.G..Vp ~ uni_pfns_df$h2_ACE[1:17], xlab = "Twin_ACE", ylab = "SNP")
+text(snp_heritability$V.G..Vp ~ uni_pfns_df$a.2_ACE[1:17], labels=snp_heritability$PFN, font=2, cex = 1.5)
+cor.test(snp_heritability$V.G..Vp, uni_pfns_df$a.2_ACE[1:17])
+
+plot(snp_heritability$V.G..Vp ~ uni_pfns_df$h2_AE[1:17], xlab = "Twin_AE", ylab = "SNP")
+text(snp_heritability$V.G..Vp ~ uni_pfns_df$h2_AE[1:17], labels=snp_heritability$PFN, font=2, cex = 1.5)
+cor.test(snp_heritability$V.G..Vp, uni_pfns_df$h2_AE[1:17])
+
+plot(snp_heritability$V.G..Vp ~ uni_cov_pfns_df$h2_AE[1:17], xlab = "Twin_AE_covs", ylab = "SNP")
+text(snp_heritability$V.G..Vp ~ uni_pfns_nocovs_df$h2_AE[1:17], labels=snp_heritability$PFN, font=2, cex = 1.5)
+cor.test(snp_heritability$V.G..Vp, uni_pfns_nocovs_df$h2_AE[1:17])
+
+# snp_heritability$d_twin <- snp_heritability$V.G..Vp - uni_pfns_df$a.2_AE[1:17]
+# hist(snp_heritability$d_twin, main = "SNP h2 - Twin h2")
+# plot(density(snp_heritability$d_twin), main = "SNP h2 - Twin h2")
+```
+
+## comparing falconers with initial ACE
+re-do falconers & compare with AE with covariates
+```{r}
+## these files aren't on this laptop locally right now, transfer from personal laptop
+# umx_ACE_results_17N <- read.csv('pfn_out_umxACE_vec_17n.csv')
+# falconer_results_17N <- read.csv('pfn_out_falconer_17n.csv')
+# umx__ACE_results_7N <- read.csv('pfn_out_umxACE_vec_7n.csv')
+# falconer_results_7N <- read.csv('pfn_out_falconer_7n.csv')
+
+
+plot(umx_results_17N$a.2, falconer_results_17N$a2, pch = 5)
+text(falconer_results_17N$a2 ~ umx_results_17N$a.2, labels=umx_results_17N$PFN_no, font=2, cex = 1.5)
+
+cor.test(umx_results_17N$a.2, falconer_results_17N$a2)
+
+plot(umx_results_17N$e.2, falconer_results_17N$e2, pch = 5)
+text(falconer_results_17N$e2 ~ umx_results_17N$e.2, labels=umx_results_17N$PFN_no, font=2, cex = 1.5)
+
+cor.test(umx_results_17N$e.2, falconer_results_17N$e2)
+
+plot(umx_results_17N$c.2, falconer_results_17N$c2, pch = 5)
+text(falconer_results_17N$c2 ~ umx_results_17N$c.2, labels=umx_results_17N$PFN_no, font=2, cex = 1.5)
+
+cor.test(umx_results_17N$c.2, falconer_results_17N$c2)
+
+plot(umx_results_7N$a.2, falconer_results_7N$a2, pch = 5)
+text(falconer_results_7N$a2 ~ umx_results_7N$a.2, labels=umx_results_7N$FN, font=2, cex = 1.5)
+
+cor.test(umx_results_7N$a.2, falconer_results_7N$a2)
+
+plot(umx_results_7N$e.2, falconer_results_7N$e2, pch = 5)
+text(falconer_results_7N$e2 ~ umx_results_7N$e.2, labels=umx_results_7N$FN, font=2, cex = 1.5)
+
+cor.test(umx_results_7N$e.2, falconer_results_7N$e2)
+
+plot(umx_results_7N$c.2, falconer_results_7N$c2, pch = 5)
+text(falconer_results_7N$c2 ~ umx_results_7N$c.2, labels=umx_results_7N$FN, font=2, cex = 1.5)
+
+cor.test(umx_results_7N$c.2, falconer_results_7N$c2)
+```
+
+## univariate results analysis
+load dfs
+```{r}
+load("uni_df.08_15_22.RData")
+load("uni_cov_df.08_15_22.RData")
+load("uni_covSA_df.08_29_22.RData")
+
+uni_pfns_df$sig_h2_AE <- as.numeric(rep(NA, dim(uni_pfns_df)[1]))
+uni_pfns_df[which(uni_pfns_df$ptim_AE_E < 0.05),]$sig_h2_AE <- uni_pfns_df[which(uni_pfns_df$ptim_AE_E < 0.05),]$h2_AE
+
+uni_cov_pfns_df$sig_h2_AE <- as.numeric(rep(NA, dim(uni_cov_pfns_df)[1]))
+uni_cov_pfns_df[which(uni_cov_pfns_df$ptim_AE_E < 0.05),]$sig_h2_AE <- uni_cov_pfns_df[which(uni_cov_pfns_df$ptim_AE_E < 0.05),]$h2_AE
+
+uni_covSA_pfns_df$sig_h2_AE <- as.numeric(rep(NA, dim(uni_covSA_pfns_df)[1]))
+uni_covSA_pfns_df[which(uni_covSA_pfns_df$ptim_AE_E < 0.05),]$sig_h2_AE <- uni_covSA_pfns_df[which(uni_covSA_pfns_df$ptim_AE_E < 0.05),]$h2_AE
+```
+visualize heritability on workbench
+```{r}
+# Read and visualize a CIFTI file -------------------------------
+# cifti_fname <- ciftiTools::ciftiTools.files()$cifti["dtseries"]
+# surfL_fname <- ciftiTools.files()$surf["left"]
+# surfR_fname <- ciftiTools.files()$surf["right"]
+
+#view_xifti_surface(xii, color_mode = "qualitative", colors = zaixu.17colors, legend_embed = FALSE)
+
+#Replace cortex data with univar h2
+
+xii_h2_ACE <- make_dscalar(xii = xii, df = uni_pfns_df, match_val = "pfn_no", map_val = "h2_ACE", save = FALSE)
+xii_h2_AE <- make_dscalar(xii = xii, df = uni_pfns_df, match_val = "pfn_no", map_val = "h2_AE", save = FALSE)
+xii_h2_AE_sig <- make_dscalar(xii = xii, df = uni_pfns_df, match_val = "pfn_no", map_val = "sig_h2_AE", save = FALSE)
+xii_h2_cov_ACE <- make_dscalar(xii = xii, df = uni_cov_pfns_df, match_val = "pfn_no", map_val = "h2_ACE", save = FALSE)
+xii_h2_cov_AE <- make_dscalar(xii = xii, df = uni_cov_pfns_df, match_val = "pfn_no", map_val = "h2_AE", save = FALSE)
+xii_h2_cov_AE_sig <- make_dscalar(xii = xii, df = uni_cov_pfns_df, match_val = "pfn_no", map_val = "sig_h2_AE", save = FALSE)
+xii_h2_covSA_ACE <- make_dscalar(xii = xii, df = uni_covSA_pfns_df, match_val = "pfn_no", map_val = "h2_ACE", save = FALSE)
+xii_h2_covSA_AE <- make_dscalar(xii = xii, df = uni_covSA_pfns_df, match_val = "pfn_no", map_val = "h2_AE", save = FALSE)
+zlim_h2= c(0,0.5)
+colors_h2 <- make_color_pal("Reds", color_mode = "sequential", zlim = zlim_h2)
+
+#No Covariates
+view_xifti_surface(xii_h2_AE, colors = colors_h2, legend_embed = TRUE, zlim = zlim_h2, title = paste("h2 AE Model, no covariates"), fname = "h2_AE_nocovs")
+view_xifti_surface(xii_h2_AE_sig, colors = colors_h2, legend_embed = TRUE, zlim = zlim_h2, title = paste("SIG h2 AE Model, no covariates"), fname = "SIG h2_AE_nocovs")
+
+view_xifti_surface(xii_h2_ACE, colors = colors_h2, legend_embed = TRUE, zlim = zlim_h2, title = paste("h2 ACE Model, no covariates"))
+
+#All Covariates
+view_xifti_surface(xii_h2_cov_AE, colors = colors_h2, legend_embed = TRUE, zlim = zlim_h2, title = paste("h2 AE Model, with covariates"), fname = "h2_AE_allcovs")
+view_xifti_surface(xii_h2_cov_AE_sig, colors = colors_h2, legend_embed = TRUE, zlim = zlim_h2, title = paste("SIG h2 AE Model, with covariates"), fname = "SIG h2_AE_allcovs")
+
+view_xifti_surface(xii_h2_cov_ACE, colors = colors_h2, legend_embed = TRUE, zlim = zlim_h2, title = paste("h2 ACE Model, with covariates"))
+
+# With only SA as covars
+view_xifti_surface(xii_h2_covSA_AE, colors = colors_h2, legend_embed = TRUE, zlim = zlim_h2, title = paste("h2 AE Model, with covariates sex & age"), fname = "h2_AE_covSAs")
+```
+
+Co-heritability with Motion
+```{r}
+#co-heritability with motion
+zlim_rG <- c(-1,1)
+colors_rG <- make_color_pal("Blues", color_mode = "sequential", zlim = zlim_rG)
+bivar_meanFD_df$abs_a_corr_AE <- abs(bivar_meanFD_df$a_corr_AE)
+xii_rG_motion <- make_dscalar(xii = xii, df = bivar_meanFD_df, match_val = "pfn_no", map_val = "a_corr_AE", save = FALSE)
+view_xifti_surface(xii_rG_motion, colors = colors_rG, legend_embed = TRUE, zlim = zlim_rG, title = paste("rG with meanFD"))
+zlim_rGabs <- c(0,1)
+colors_rGabs <- make_color_pal("Blues", color_mode = "sequential", zlim = zlim_rGabs)
+xii_absrG_motion <- make_dscalar(xii = xii, df = bivar_meanFD_df, match_val = "pfn_no", map_val = "a_corr_AE", save = FALSE)
+view_xifti_surface(xii_absrG_motion, colors = colors_rGabs, legend_embed = TRUE, zlim = zlim_rGabs, title = paste("absolute rG with meanFD"))
+
+delta_h2_ACE_cov <- (uni_pfns_df$h2_ACE - uni_cov_pfns_df$h2_ACE)
+plot(delta_h2_ACE_cov[1:17], bivar_meanFD_df$a_corr_ACE)
+cor.test(delta_h2_ACE_cov[1:17], bivar_meanFD_df$a_corr_ACE)
+
+delta_h2_AE_cov <- abs(uni_pfns_df$h2_AE - uni_cov_pfns_df$h2_AE)
+plot(delta_h2_AE_cov[1:17], bivar_meanFD_df$a_corr_AE)
+cor.test(delta_h2_AE_cov[1:17], bivar_meanFD_df$a_corr_AE)
+```
+bestModel on workbench
+```{r}
+#view_xifti_surface(xii, color_mode = "qualitative", colors = zaixu.17colors, legend_embed = FALSE)
+
+#Replace cortex data with bM data
+
+#bestModel_ACE is AE vs ACE
+xii_bM_NOcov <- make_dscalar(xii = xii, df = uni_pfns_df, match_val = "pfn_no", map_val = "bestModel_ACE", save = FALSE, view = FALSE)
+xii_bM_cov <- make_dscalar(xii = xii, df = uni_cov_pfns_df, match_val = "pfn_no", map_val = "bestModel_ACE", save = FALSE, view = FALSE)
+xii_bM_covSA <- make_dscalar(xii = xii, df = uni_covSA_pfns_df, match_val = "pfn_no", map_val = "bestModel_ACE", save = FALSE, view = FALSE)
+
+colors_bM <- make_color_pal("Accent", color_mode = "qualitative", zlim = 2)
+view_xifti_surface(xii_bM_NOcov, colors = colors_bM, legend_alllevels = FALSE,   zlim = 2, title = paste("best Model, no covariates"), fname = "bestModel AE vs ACE no covs")
+view_xifti_surface(xii_bM_cov, colors = colors_bM, legend_alllevels = FALSE,   zlim = 2, title = paste("best Model, all covariates"), fname = "bestModel AE vs ACE all covs")
+view_xifti_surface(xii_bM_covSA, colors = colors_bM, legend_alllevels = FALSE,   zlim = 3, title = paste("best Model, SexAge regout"))
+```
+modality, SA axis stuff
+```{r}
+# Margulies et al, 2016 PNAS
+#high_G1 <- c(unimodal, "PFN5", "PFN6", "PFN7", "DAN", "VAN")
+
+#heritability, a^2 all networks
+t.test(h2_ACE ~ Modality, uni_pfns_df[1:17,])
+t.test(h2_AE ~ Modality, uni_pfns_df[1:17,])
+
+t.test(h2_ACE ~ Modality, uni_cov_pfns_df[1:17,])
+t.test(h2_AE ~ Modality, uni_cov_pfns_df[1:17,])
+
+t.test(h2_ACE ~ Modality, uni_covSA_pfns_df[1:17,])
+t.test(h2_AE ~ Modality, uni_covSA_pfns_df[1:17,])
+
+#t.test(a.2 ~ G1, pfns_ae_vs_e_covs_output[1:17,])
+# ggplot(uni_pfns_df[1:17,],aes(x = modality, y = a.2_ACE, label = ROI)) + geom_boxplot() + geom_point() + geom_label(aes(label = ROI), size = 2)
+# ggplot(uni_pfns_df[1:17,],aes(x = modality, y = a.2_AE, label = ROI)) + geom_boxplot() + geom_point()+ geom_label(aes(label = ROI), size = 2)
+
+##no covs reg out
+formula <- y ~ x
+summary(lm(h2_AE ~ SA_order, data = uni_pfns_df))
+ggplot(uni_pfns_df,aes(x = SA_order, y = h2_AE, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "left", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3) + ylim(0,0.5) + ggtitle("AE heritability, no covars")
+
+
+
+summary(lm(h2_ACE ~ SA_order, data = uni_pfns_df))
+ggplot(uni_pfns_df,aes(x = SA_order, y = h2_ACE, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "left", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3)+ ylim(0,0.5)
+
+ggplot(uni_pfns_df,aes(x = SA_order, y = h2_AE, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "left", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3) + ylim(0,0.5)
+summary(lm(h2_ACE ~ SA_order, data = uni_pfns_df))
+ggplot(uni_pfns_df,aes(x = SA_order, y = h2_ACE, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "left", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3)+ ylim(0,0.5)
+
+cor.test(~ SA_order + h2_AE, data=uni_pfns_df, method = "spearman")
+cor.test(~ SA_order + h2_ACE, data=uni_pfns_df, method = "spearman")
+
+#all cov
+summary(lm(h2_AE ~ SA_order, data = uni_cov_pfns_df))
+ggplot(uni_cov_pfns_df,aes(x = SA_order, y = h2_AE, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "left", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3) + ylim(0,0.5) + ggtitle("AE heritability, all covars")
+
+summary(lm(sig_h2_AE ~ SA_order, data = uni_cov_pfns_df))
+ggplot(uni_cov_pfns_df,aes(x = SA_order, y = sig_h2_AE, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "left", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3) + ylim(0,0.5) + ggtitle("sig AE heritability, all covars")
+
+summary(lm(h2_ACE ~ SA_order, data = uni_cov_pfns_df))
+ggplot(uni_cov_pfns_df,aes(x = SA_order, y = h2_ACE, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "left", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3)+ ylim(0,0.5)
+
+cor.test(~ SA_order + h2_AE, data=uni_cov_pfns_df, method = "spearman")
+cor.test(~ SA_order + h2_ACE, data=uni_cov_pfns_df, method = "spearman")
+
+#only sex/age reg out
+summary(lm(h2_AE ~ SA_order, data = uni_covSA_pfns_df))
+ggplot(uni_covSA_pfns_df,aes(x = SA_order, y = h2_AE, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "left", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3) + ylim(0,0.5)
+summary(lm(h2_ACE ~ SA_order, data = uni_covSA_pfns_df))
+ggplot(uni_covSA_pfns_df,aes(x = SA_order, y = h2_ACE, label = ROI_1)) + geom_point() + geom_text(size = 2.5) + geom_smooth(method = "lm", formula = formula) + stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), label.x.npc = "left", label.y.npc = 0.15,formula = formula, parse = TRUE, size = 3)+ ylim(0,0.5)
+
+cor.test(~ SA_order + h2_AE, data=uni_covSA_pfns_df, method = "spearman")
+cor.test(~ SA_order + h2_ACE, data=uni_covSA_pfns_df, method = "spearman")
+
+
+#heritability, a^2 heritable networks
+t.test(a.2_ACE ~ modality, uni_heritable_df_17)
+t.test(a.2_AE ~ modality, uni_heritable_df_17)
+
+#uni vs hetero in heritable networks based on AE vs E model
+ggplot(uni_pfns_df[1:17,],aes(x = Modality, y = h2_AE, label = ROI_1)) + geom_boxplot() + geom_point()+ geom_text()+ ylim(0,0.5)
+
+ggplot(uni_cov_pfns_df[1:17,],aes(x = Modality, y = h2_AE, label = ROI_1)) + geom_boxplot() + geom_point() + geom_text() + ylim(0,0.5)
+```
+Residuals from SA linreg
+```{r}
+lm <- lm(h2_AE ~ SA_order, data = uni_pfns_df)
+uni_pfns_df$h2_SA_resd <- rep(NA, 25)
+uni_pfns_df$h2_SA_resd[1:17]<- lm$residuals
+
+xii_h2SA_resd <- make_dscalar(xii = xii, df = uni_pfns_df, match_val = "pfn_no", map_val = "h2_SA_resd", save = FALSE, view = FALSE)
+
+zlim_h2SA_resd <- c(-0.25, 0.20)
+colors_h2SA_resd<- make_color_pal(coolwarm(100), color_mode = "diverging", zlim = zlim_h2SA_resd)
+
+view_xifti_surface(xii_h2SA_resd, colors = colors_h2SA_resd, zlim = zlim_h2SA_resd, title = paste("h2 ~ SA Residuals"), fname = "h2 ~ SA Resd")
+```
+
+##compare covar +/- models significant
+PFN8 bestModel +covs DE, -covs AE. All other PFNs same bestModel +/- covs. FP1
+PFN16 potentially benefits from covars, others don't in terms of fit. DMN2
+Should I test the effect of each covar individually if all three of them don't matter?
+*can also check how much A/C/E change when covars are included.
+```{r}
+diff_bM <- !(uni_pfns_df$bestModel_ACE %in% uni_pfns_nocovs_df$bestModel_ACE)
+
+list_uni_cov <- uni_pfns_ACE%$%subModelsACE
+list_uni_cov <- list_uni_cov%$%bestModel
+list_uni_cov <- lapply(list_uni_cov, function(x){ x <- mxModel(x, name = paste ("cov", sep = "_"))})
+
+list_uni_nocov <- uni_pfns_nocovs%$%subModelsACE
+list_uni_nocov <- list_uni_nocov%$%bestModel
+list_uni_nocov <- lapply(list_uni_nocov, function(x){ x <- mxModel(x, name = paste ("NOcov", sep = "_"))})
+
+list_uni_cov <- list_uni_cov[-c(which(diff_bM))]
+list_uni_nocov <- list_uni_nocov[-c(which(diff_bM))]
+
+compare_cov <- mapply(umx::umxCompare, list_uni_cov, list_uni_nocov, report = "markdown", SIMPLIFY = FALSE) #compare +/-cov
+compare_cov_df <- rbindlist(lapply(compare_cov, function(x){  
+modname_AE <- x$Model
+  
+  	  AIC<-as.data.frame(t(unlist(x[,which(names(x)=="AIC")])))
+  	   		names(AIC)<-paste("AIC",modname_AE,sep="_")
+  	  EP <- as.data.frame(t(unlist(x[,which(names(x)=="EP")])))
+  	   		names(EP)<-paste("EP",modname_AE,sep="_")
+  	  dFit <- as.data.frame(t(unlist(x[,which(names(x)=="Δ Fit")])))
+  	   		names(dFit)<-paste("dFit",modname_AE,sep="_")
+  	  dAIC<-as.data.frame(t(unlist(x[,which(names(x)=="Δ AIC")])))
+  	   		names(dAIC)<-paste("dAIC",modname_AE,sep="_")
+  	  X2<-as.data.frame(t(unlist(x[,which(names(x)=="Δ Fit")])))
+  	   		names(X2)<-paste("X2", modname_AE,sep="_")
+  	  dDF<- as.data.frame(t(unlist(x[,which(names(x)=="Δ df")])))
+  	   		names(dDF)<-paste("dDF", modname_AE,sep="_")
+  	  p<-as.data.frame(t(unlist(x[,which(names(x)=="p")])))
+  	   		names(p)<-paste("ptim",modname_AE,sep="_")
+   df <- as.data.frame(t(unlist(c(AIC, EP, dFit, dAIC, X2, dDF, p))))
+   return(df)
+}), fill = TRUE, use.names = TRUE)
+
+compare_cov_df$Model <- uni_pfns_df[-c(which(diff_bM)),]$bestModel_ACE
+compare_cov_df$ROI <- names_all[-c(which(diff_bM))]
+
+plot(uni_pfns_df$a.2_AE, uni_pfns_nocovs_df$a.2_AE, xlab = "with covariates", ylab = "without covariates", main = "h2 from AE model")
+text(uni_pfns_nocovs_df$a.2_AE ~ uni_pfns_df$a.2_AE, labels=uni_pfns_df$ROI, font=0.5, cex = 0.35)
+which()
+```
+
+##get Betas for covariate
+How to interpret this ???
+```{r}
+list_uni_cov <- uni_pfns_ACE%$%subModelsACE
+list_uni_cov <- list_uni_cov%$%bestModel
+
+covar_betas <- sapply(list_uni_cov, function(x) {mxEval(top.meansBetas,x)})
+rownames(covar_betas) <- rownames(mxEval(top.meansBetas, list_uni_cov[[1]]))
+colnames(covar_betas) <- names_all
+```
+
+##bivariate results analysis
+load df results (from the latest run using umx 4.15, on cubic)
+```{r}
+#load("bivar_df.07_27_22.RData")
+#load("bivar_cov_df.07_27_22.RData")
+bivar_df <- read.csv("bivar_df.09_30_22.csv")
+
+bivar_auto_cols <- data.frame(ROI_1 = names_pfn_17 , ROI_2 = names_pfn_17, a_corr_AE = rep(NA, 17))
+
+bivar_df <- rbind(bivar_df, bivar_auto_cols, fill = TRUE)
+```
+rG maps for each ROI
+```{r}
+bivar_xii_list <- vector(mode = "list", length = 17)
+bivar_df$ROI_2_pfn_no <- gsub("PFN", "", bivar_df$ROI_2)
+for(i in 1:17){
+bivar_xii_list[[i]] <- make_dscalar(xii = xii, df = bivar_df[which(bivar_df$ROI_1 %in% paste0("PFN", i)),], match_val = "ROI_2_pfn_no", map_val = "a_corr_AE", save = FALSE)
+zlim_rG= c(-0.25,0.25)
+colors_rG <- make_color_pal(coolwarm(100), color_mode = "diverging", zlim = zlim_rG)
+#color_rG <- use_color_pal(seq(-0.5,0.5, length.out = 100), pal = "coolwarm", color_NA = "black")
+view_xifti_surface(bivar_xii_list[[i]], colors = colors_rG, legend_embed = TRUE, zlim = zlim_rG, title = paste("PFN", i, "rG Map"), fname = paste("PFN", i, "rG Map"))
+}
+```
+
+rP maps for each ROI
+```{r}
+bivar_xii_rP_list <- vector(mode = "list", length = 17)
+bivar_df$ROI_2_pfn_no <- gsub("PFN", "", bivar_df$ROI_2)
+for(i in 1:17){
+bivar_xii_rP_list[[i]] <- make_dscalar(xii = xii, df = bivar_df[which(bivar_df$ROI_1 %in% paste0("PFN", i)),], match_val = "ROI_2_pfn_no", map_val = "rP", save = FALSE)
+zlim_rP= c(-0.25,0.25)
+colors_rP <- make_color_pal(coolwarm(100), color_mode = "diverging", zlim = zlim_rP)
+#color_rG <- use_color_pal(seq(-0.5,0.5, length.out = 100), pal = "coolwarm", color_NA = "black")
+view_xifti_surface(bivar_xii_rP_list[[i]], colors = colors_rP, legend_embed = TRUE, zlim = zlim_rG, title = paste("PFN", i, "rP Map"), fname = paste("PFN", i, "rP Map"))
+}
+
+```
+get bivar rG maps
+```{r}
+#see all pairs together
+ggplot(bivar_df, aes(x = a_corr_ACE, y = reorder(roi_both, a_corr_ACE), width = 0.5, color = reorder(roi_class_both, a_corr_ACE))) + geom_bar(stat = "identity") + labs(y = "Networks", x = "Additive Genetic Correlation, ACE Model")
+
+#color
+library(RColorBrewer)
+
+#h2_1 and h2_2 as x & y axis, very non-ideal representation
+ggplot(bivar_df, aes(x = a.2_ROI1_AE, y = a.2_ROI2_AE, size = abs(as.numeric(rA1_AE_ROI_2)), color = paste(ROI1, ROI2, sep = "_"))) + geom_point(shape = 16, alpha = 0.4) + theme_classic() + labs(x = "h2 ROI1", y = "h2 ROI2") + scale_fill_brewer(palette = "Set2")
+
+#plot rP vs rG, showing both PFNs
+jitter <- position_jitter(width = 0.02, height = 0.04)
+ggplot(bivar_df, aes(x = abs(as.numeric(rA1_AE_ROI_2)*100), y = abs(as.numeric(rP))*100)) + geom_point(shape = 4, aes(fill = rA1_AE_ROI_2 > 0), position = position_nudge(x = 0.007)) + scale_fill_discrete(c("red", "green", "black")) + geom_point(aes(alpha = a.2_ROI1_AE, color = ROI1), hjust = 0, size = 3, position = position_nudge(x = 0.01)) + geom_point(aes(alpha = a.2_ROI2_AE,color = ROI2 ), hjust = 0, size = 3, position = position_nudge(x = (0.004))) + theme_classic() + labs(x = "rG", y = "rP")
+```
+looking at effect of SA axis
+PFN5,PFN9 doesn't work AE model, figure out why ...
+```{r}
+#a_corr 
+#abs value of correlation
+ggplot(bivar_df,aes(x = as.factor(class_same), y = abs(a_corr_ACE), label = paste(ROI1_class, ROI2_class))) + geom_violin() + geom_point() + geom_text(size = 2) + theme_classic() + labs(x = "Same Network?", y = "Additive Genetic Correlation, ACE Model")
+
+#raw corr value - same network no negative correlation :)
+ggplot(bivar_df,aes(x = as.factor(class_same), y = a_corr_ACE, label = paste(ROI1_class, ROI2_class))) + geom_violin() + geom_point() + geom_text(size = 2) + theme_classic() + labs(x = "Same Network?", y = "Additive Genetic Correlation, ACE Model")
+
+#raw corr value - no difference
+ggplot(bivar_df,aes(x = as.factor(mod_same), y = a_corr_ACE, label = paste(ROI1_class, ROI2_class))) + geom_violin() + geom_point() + geom_text(size = 2) + theme_classic() + labs(x = "Same Modality?", y = "Additive Genetic Correlation, ACE Model")
+
+#rG, not dep. on separate h2s
+ggplot(bivar_df,aes(x = as.factor(class_same), y = abs(as.numeric(rA1_ACE_ROI_2)), label = paste(ROI1_class, ROI2_class))) + geom_violin() + geom_point() + geom_text(size = 2) + theme_classic() + labs(x = "Same Network?", y = "rG, ACE Model")
+
+ggplot(bivar_df,aes(x = as.factor(mod_same), y = abs(as.numeric(rA1_ACE_ROI_2)), label = paste(ROI1_class, ROI2_class))) + geom_violin() + geom_point() + geom_text(size = 2) + theme_classic() + labs(x = "Same Modality?", y = "rG", "ACE Model")
+
+#plot of SA distance against a_corr & rG
+#rG
+ggplot(bivar_df, aes(x = SA_dist, y = as.numeric(rA1_AE_ROI_2))) + geom_point(shape = 4) + theme_classic() + labs(y = "rG, AE Model", x = "Distance of networks on SA Axis")
+
+ggplot(bivar_df, aes(x = SA_dist, y = as.numeric(rA1_ACE_ROI_2))) + geom_point(shape = 4) + theme_classic() + labs(y = "rG, ACE Model", x = "Distance of networks on SA Axis")
+
+cor.test(~SA_dist + as.numeric(rA1_ACE_ROI_2), data = bivar_df)
+
+
+#a_corr
+ggplot(bivar_df, aes(x = SA_dist, y = a_corr_AE)) + geom_point(shape = 4) + theme_classic() + labs(y = "Additive Gen Corr, AE Model", x = "Distance of networks on SA Axis")
+
+ggplot(bivar_df, aes(x = SA_dist, y = a_corr_ACE)) + geom_point(shape = 4) + theme_classic() + labs(y = "Additive Gen Corr, ACE Model", x = "Distance of networks on SA Axis")
+
+cor.test(~SA_dist + a_corr_AE, data = bivar_df)
+cor.test(~SA_dist + a_corr_ACE, data = bivar_df)
+
+```
+compare h2 of networks within bivar runs & univar results
+```{r}
+bivar_h2_roi1 <- group_by(bivar_df, ROI1) %>% summarize(median_ACE_ROI1 = median(a.2_ROI1_ACE ),
+            mean_ACE_ROI1 = mean(a.2_ROI1_ACE ),
+            sd_ACE_ROI1 = sd(a.2_ROI1_ACE ),
+            CoV_ACE_ROI1 = sd(a.2_ROI1_ACE )/mean(a.2_ROI1_ACE ),
+            median_AE_ROI1 = median(a.2_ROI1_AE ),
+            mean_AE_ROI1 = mean(a.2_ROI1_AE ),
+            sd_AE_ROI1 = sd(a.2_ROI1_AE ),
+            CoV_AE_ROI1 = sd(a.2_ROI1_AE )/mean(a.2_ROI1_AE ))
+colnames(bivar_h2_roi1)[1] <- c('ROI')
+
+bivar_h2_roi2 <- group_by(bivar_df, ROI2) %>% summarize(median_ACE_ROI2 = median(a.2_ROI2_ACE ),
+            mean_ACE_ROI2 = mean(a.2_ROI2_ACE ),
+            sd_ACE_ROI2 = sd(a.2_ROI2_ACE ),
+            CoV_ACE_ROI2 = sd(a.2_ROI2_ACE )/mean(a.2_ROI2_ACE ),
+            median_AE_ROI2 = median(a.2_ROI2_AE ),
+            mean_AE_ROI2 = mean(a.2_ROI2_AE ),
+            sd_AE_ROI2 = sd(a.2_ROI2_AE ),
+            CoV_AE_ROI2 = sd(a.2_ROI2_AE )/mean(a.2_ROI2_AE ))
+
+colnames(bivar_h2_roi2)[1] <- c('ROI')
+
+bivar_h2_all <- merge(bivar_h2_roi1, bivar_h2_roi2, by = "ROI", all = TRUE) %>% merge(uni_heritable_df_17[,c("ROI", "a.2_ACE", "a.2_AE")] , by = "ROI", all = TRUE)
+
+##overall tracks pretty well with univar estimates for ACE
+plot(bivar_h2_all$mean_ACE_ROI1, bivar_h2_all$mean_ACE_ROI2)
+cor.test(bivar_h2_all$mean_ACE_ROI1, bivar_h2_all$mean_ACE_ROI2)
+plot(bivar_h2_all$mean_ACE_ROI1, bivar_h2_all$a.2_ACE)
+cor.test(bivar_h2_all$mean_ACE_ROI1, bivar_h2_all$a.2_ACE)
+plot(bivar_h2_all$mean_ACE_ROI2, bivar_h2_all$a.2_ACE)
+cor.test(bivar_h2_all$mean_ACE_ROI2, bivar_h2_all$a.2_ACE)
+#AE, also tracks pretty well. roi1 & roi2 results less strongly corr than ACE model
+plot(bivar_h2_all$mean_AE_ROI1, bivar_h2_all$mean_AE_ROI2)
+cor.test(bivar_h2_all$mean_AE_ROI1, bivar_h2_all$mean_AE_ROI2)
+plot(bivar_h2_all$mean_AE_ROI1, bivar_h2_all$a.2_AE)
+cor.test(bivar_h2_all$mean_AE_ROI1, bivar_h2_all$a.2_AE)
+plot(bivar_h2_all$mean_AE_ROI2, bivar_h2_all$a.2_AE)
+cor.test(bivar_h2_all$mean_AE_ROI2, bivar_h2_all$a.2_AE)
+
+#PFN10, PFN16, PFN9 as roi2 the CoV is high, 0.4, 0.5, 0.6
+ggplot() + geom_point(aes(y = as.numeric(bivar_df[which(bivar_df$ROI2 == "PFN10"),]$a.2_ROI2_ACE), x = bivar_df[which(bivar_df$ROI2 == "PFN10"),]$ROI1))
+ggplot() + geom_point(aes(y = as.numeric(bivar_df[which(bivar_df$ROI1 == "PFN10"),]$a.2_ROI1_ACE), x = bivar_df[which(bivar_df$ROI1 == "PFN10"),]$ROI2))
+hist(as.numeric(bivar_df[which(bivar_df$ROI1 == "PFN10"),]$a.2_ROI2_ACE))
+
+```
+cluster on rG
+```{r}
+#hclust on just the pfn sizes correlation matrix
+pfns_cor_matrix<- dplyr::select(ABCD_twins_pfn, PFN1:PFN17) %>% cor(use = "pairwise.complete.obs")
+pfns_size_dist <- as.dist(1-pfns_cor_matrix)
+pfns_size_clust <- hclust(pfns_size_dist)
+pfns_size_dend = as.dendrogram(pfns_size_clust)
+labels(pfns_size_dend) <- pfn_to_name$Name
+plot(pfns_size_dend)
+#hclust on just the pfn sizes correlation matrix, for 'heritable pfns'
+pfns_cor_matrix<- dplyr::select(ABCD_twins_pfn, uni_heritable_df_17$ROI) %>% cor(use = "pairwise.complete.obs")
+pfns_size_dist <- as.dist(1-pfns_cor_matrix)
+pfns_size_clust <- hclust(pfns_size_dist)
+pfns_size_dend = as.dendrogram(pfns_size_clust)
+labels(pfns_size_dend) <- pfn_to_name$Name
+plot(pfns_size_dend)
+
+
+#on rG, 1-rG
+pfns_rG_matrix <- get_dist_matrix(uni_pfns_df[1:17,], bivar_df, "ROI", "a_corr_AE", "a_corr_ACE")
+pfns_rG_matrix[is.na(pfns_rG_matrix)] <- 0
+pfns_rG_dist <- as.dist(1-pfns_rG_matrix)
+pfns_rG_clust <- hclust(pfns_rG_dist, method = "ward.D2")
+pfns_rG_dend = as.dendrogram(pfns_rG_clust)
+plot(pfns_rG_dend)
+labels <- uni_pfns_df[match(labels(pfns_rG_dend),uni_pfns_df$ROI_1, NA),"Name"]
+labels(pfns_rG_dend) <- labels
+plot(pfns_rG_dend)
+pheatmap(pfns_rG_matrix)
+
+#on rG, 1-abs(rG), labels are from 17N list!!! (fix)
+pfns_rG_matrix_abs<- abs(get_dist_matrix(uni_pfns_df[1:17,], bivar_df, "ROI", "a_corr_AE", "a_corr_ACE"))
+pfns_rG_matrix_abs[is.na(pfns_rG_matrix_abs)] <- 0
+pfns_rG_dist <- as.dist(1-abs(pfns_rG_matrix))
+pfns_rG_clust <- hclust(pfns_rG_dist, method = "ward.D2")
+pfns_rG_dend = as.dendrogram(pfns_rG_clust)
+labels(pfns_rG_dend) <- pfn_to_name$Name
+plot(pfns_rG_dend)
+pheatmap(pfns_rG_matrix)
+
+# ggcorrplot, heatmap w reordering based on hclust
+ggcorrplot(pfns_rG_matrix, outline.col = "white")
+ggcorrplot(pfns_rG_matrix, hc.order = TRUE, outline.col = "white", type = "upper")
+#ggcorrplot(pfns_rG_matrix_abs, hc.order = TRUE, outline.col = "white", type = "upper")
+ggcorrplot(pfns_cor_matrix, hc.order = TRUE, outline.col = "white", type = "upper")
+```
+
+#OLD CODE
+
+ggseg doesn't have atlas that actually corresponds
+## ggseg plots
+PFN labels don't correspond to the yeo17 ggseg atlas lol
+```{r}
+# get heritabilities where A is significant in the model
+list_uni_cov <- uni_pfns_ACE%$%subModelsACE
+list_uni_cov <- list_uni_cov%$%bestModel
+bM_cov_summary<- lapply(list_uni_cov, umxSummaryACE_EK)
+
+uni_pfns_df$h2_AE <- ifelse(uni_pfns_df$ptim_AE_E < (0.05/17), uni_pfns_df$a.2_AE, NA)
+uni_pfns_df$h2_ACE <- ifelse(uni_pfns_df$ptim_ACE_CE < (0.05/17), uni_pfns_df$a.2_ACE, NA)
+uni_pfns_nocovs_df$h2_AE <- ifelse(uni_pfns_nocovs_df$ptim_AE_E < (0.05/17), uni_pfns_nocovs_df$a.2_AE, NA)
+uni_pfns_nocovs_df$h2_ACE <- ifelse(uni_pfns_nocovs_df$ptim_ACE_CE < (0.05/17), uni_pfns_nocovs_df$a.2_ACE, NA)
+
+
+#plot heritability with ggseg
+
+#SUPER hacky way to get a data frame that has the correct values in a data frame that also includes the correct 'region' label
+
+##yeo17
+
+#heritability vectors
+h2_ACE_17<- as.vector(uni_pfns_df[1:17,]$h2_ACE)
+h2_AE_17 <- as.vector(uni_pfns_df[1:17,]$h2_AE)
+h2_nocov_ACE_17 <- as.vector(uni_pfns_nocovs_df[1:17,]$h2_ACE)
+h2_nocov_AE_17 <- as.vector(uni_pfns_nocovs_df[1:17,]$h2_AE)
+
+#other variables vectors: include betas from covars, bestModel etc
+cov_17 <- cv_pfns[1:17, 2]
+cor_meanFD_17 <- cor_pfn_meanFD$r_corr_sig[1:17]
+bestModel_17 <- uni_pfns_df[1:17]$bestModel_ACE
+
+mylabels <- paste('lh_17Networks_', 1:17, sep = '') #data organized by network which corresponds to label in the yeo17 dataframe
+mylabels_data_17n <- data.frame(h2_ACE=h2_ACE_17, h2_AE = h2_AE_17, h2_nocov_ACE = h2_nocov_ACE_17, h2_nocov_AE = h2_nocov_AE_17, a2_ACE = uni_pfns_df[1:17]$a.2_ACE, a2_AE = uni_pfns_df[1:17]$a.2_AE, cov = cov_17, cor_meanFD = cor_meanFD_17, bestModel = bestModel_17, label = mylabels)
+
+dfyeo17 <- data.frame(yeo17)
+dfyeo17clean <- dfyeo17[!duplicated(dfyeo17$label)& grepl('lh_',dfyeo17$label),c("region","label") ] # just get yeo17 labels and regions
+mylabels_data_regions_17 <- merge(mylabels_data_17n, dfyeo17clean, by = 'label', sort = F)
+mylabels_data_regions_17 <- mylabels_data_regions_17[,c('h2_ACE', 'h2_AE', 'h2_nocov_ACE', 'h2_nocov_AE', 'a2_ACE', 'a2_AE', 'cov', 'cor_meanFD', 'bestModel', 'region')]
+
+
+#17 networks
+
+#ACE a2, significant
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=h2_ACE), atlas=yeo17) + 
+  scale_fill_gradient(low="cyan", high="blue4", limits = c(0, 0.5))
+#AE a2, significant, cov
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=h2_AE), atlas=yeo17) + 
+  scale_fill_gradient(low="cyan", high="blue4", limits = c(0, 0.5))
+#AE a2, significant, nocov
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=h2_nocov_AE), atlas=yeo17) + 
+  scale_fill_gradient(low="cyan", high="blue4", limits = c(0, 0.5))
+#AE a2 all, cov
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=a2_AE), atlas=yeo17) + 
+  scale_fill_gradient(low="cyan", high="blue4", limits = c(0, 0.5))
+
+
+
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=as.numeric(h2_nocov_all)), atlas=yeo17) + 
+  scale_fill_gradient(low="cyan", high="blue4",limits = c(0, 0.5))
+
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=as.numeric(h2_nocov)), atlas=yeo17) + 
+  scale_fill_gradient(low="cyan", high="blue4",limits = c(0, 0.5))
+
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=cov), atlas=yeo17) + 
+  scale_fill_gradient(low="pink", high="red", limits = c(3.9, 12.1))
+
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=cor_meanFD), atlas=yeo17) + 
+  scale_fill_gradient(low="red", high="green", limits = c(-0.3, 0.4))
+
+#bestModel univar
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=bestModel), atlas=yeo17) + 
+  scale_fill_discrete()
+
+#just the atlas
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=region), atlas=yeo17)
+
+
+##yeo 7
+h2_7 <- as.vector(pfns_ae_vs_e_covs_output[18:24,]$h2)
+cov_7 <- cv_pfns[18:24, 2]
+cor_meanFD_7 <- cor_pfn_meanFD_corrected$r_corr[18:24]
+mylabels_7n <- paste('lh_7Networks_', 1:7, sep = '') #data organized by network which corresponds to label in the yeo7 dataframe
+mylabels_data_7n <- data.frame(h2=h2_7, cov = cov_7, cor_meanFD = cor_meanFD_7,label = mylabels_7n)
+dfyeo7 <- data.frame(yeo7)
+dfyeo7clean <- dfyeo7[!duplicated(dfyeo7$label)& grepl('lh_',dfyeo7$label),c("region","label") ] # just get yeo7 labels and regions
+mylabels_data_regions_7 <- merge(mylabels_data_7n,dfyeo7clean, by = 'label', sort = F)
+mylabels_data_regions_7 <- mylabels_data_regions_7[,c('h2','cov','cor_meanFD', 'region')]
+
+#7 networks
+ggseg(.data=mylabels_data_regions_7, mapping=aes(fill=h2), atlas=yeo7) +
+  scale_fill_gradient(low="cyan", high="blue4", limits = c(0, 0.5))
+
+ggseg(.data=mylabels_data_regions_7, mapping=aes(fill=cov), atlas=yeo7) + 
+  scale_fill_gradient(low="pink", high="red", limits = c(3.9, 12.1))
+
+ggseg(.data=mylabels_data_regions_7, mapping=aes(fill=cor_meanFD), atlas=yeo7) + 
+  scale_fill_gradient(low="red", high="green", limits = c(-0.3, 0.4))
+
+ggseg(.data=mylabels_data_regions_17, mapping=aes(fill=region), atlas=yeo7)
+
+```
+
+##umx_ACE_EK function
+
+```{r}
+umxACE_EK <- function(name = "ACE", selDVs, selCovs = NULL, dzData = NULL, mzData = NULL, sep = NULL, data = NULL, zyg = "zygosity", type = c("Auto", "FIML", "cov", "cor", "WLS", "DWLS", "ULS"),  numObsDZ = NULL, numObsMZ = NULL, boundDiag = 0, allContinuousMethod = c("cumulants", "marginals"), autoRun = getOption("umx_auto_run"), intervals = FALSE, tryHard = c("no", "yes", "ordinal", "search"), optimizer = NULL,  residualizeContinuousVars = FALSE, nSib = 2, dzAr = 0.5, dzCr = 1, weightVar = NULL, equateMeans = TRUE, addStd = TRUE, addCI = TRUE) {
+  tryHard = match.arg(tryHard)
+  type = match.arg(type)
+  allContinuousMethod = match.arg(allContinuousMethod)
+  if (residualizeContinuousVars) {
+    stop("residualizing (as opposed to modelling) continuous variables not implemented yet: just set to FALSE for now")
+  }
+  if (dzCr == 0.25 & (name == "ACE")) {
+    name = "ADE"
+  }
+  if (!is.null(data)) {
+    if (is.null(sep)) {
+      sep = "_T"
+    }
+    if ("tbl" %in% class(data)) {
+      data = as.data.frame(data)
+    }
+    mzData = data[data[, zyg] %in% ifelse(is.null(mzData), 
+                                          "DZ", mzData), ]
+    dzData = data[data[, zyg] %in% ifelse(is.null(dzData), 
+                                          "DZ", dzData), ]
+  }
+  else {
+    if ("tbl" %in% class(mzData)) {
+      mzData = as.data.frame(mzData)
+      dzData = as.data.frame(dzData)
+    }
+  }
+  xmu_twin_check(selDVs = selDVs, sep = sep, dzData = dzData, 
+                 mzData = mzData, enforceSep = FALSE, nSib = nSib, optimizer = optimizer)
+  selVars = xmu_twin_upgrade_selDvs2SelVars(selDVs = selDVs, 
+                                            sep = sep, nSib = nSib)
+  model = xmu_make_TwinSuperModel(name = name, mzData = mzData, 
+                                  dzData = dzData, selDVs = selDVs, selCovs = selCovs, 
+                                  sep = sep, type = type, allContinuousMethod = allContinuousMethod, 
+                                  numObsMZ = numObsMZ, numObsDZ = numObsDZ, nSib = nSib, 
+                                  equateMeans = equateMeans, weightVar = weightVar, bVector = FALSE, 
+                                  verbose = FALSE)
+  tmp = xmu_starts(mzData, dzData, selVars = selDVs, sep = sep, 
+                   nSib = nSib, varForm = "Cholesky", equateMeans = equateMeans, 
+                   SD = TRUE, divideBy = 3)
+  nVar = length(selVars)/nSib
+  if (nSib == 2) {
+    expCovMZ = mxAlgebra(rbind(cbind(ACE, AC), cbind(AC, 
+                                                     ACE)), dimnames = list(selVars, selVars), name = "expCovMZ")
+    expCovDZ = mxAlgebra(rbind(cbind(ACE, hAC), cbind(hAC, 
+                                                      ACE)), dimnames = list(selVars, selVars), name = "expCovDZ")
+  }
+  else if (nSib == 3) {
+    expCovMZ = mxAlgebra(name = "expCovMZ", dimnames = list(selVars, 
+                                                            selVars), rbind(cbind(ACE, AC, hAC), cbind(AC, ACE, 
+                                                                                                       hAC), cbind(hAC, hAC, ACE)))
+    expCovDZ = mxAlgebra(name = "expCovDZ", dimnames = list(selVars, 
+                                                            selVars), rbind(cbind(ACE, hAC, hAC), cbind(hAC, 
+                                                                                                        ACE, hAC), cbind(hAC, hAC, ACE)))
+  }
+  else {
+    stop("3 sibs is experimental, but ", nSib, "? ... Maybe come back in 2022, best tim :-)")
+  }
+  top = mxModel(model$top, umxMatrix("a", type = "Lower", nrow = nVar, 
+                                     ncol = nVar, free = TRUE, values = tmp$varStarts, byrow = TRUE), 
+                umxMatrix("c", type = "Lower", nrow = nVar, ncol = nVar, 
+                          free = TRUE, values = tmp$varStarts, byrow = TRUE), 
+                umxMatrix("e", type = "Lower", nrow = nVar, ncol = nVar, 
+                          free = TRUE, values = tmp$varStarts, byrow = TRUE), 
+                umxMatrix("dzAr", "Full", 1, 1, free = FALSE, values = dzAr), 
+                umxMatrix("dzCr", "Full", 1, 1, free = FALSE, values = dzCr), 
+                mxAlgebra(name = "A", a %*% t(a)), mxAlgebra(name = "C", 
+                                                             c %*% t(c)), mxAlgebra(name = "E", e %*% t(e)), mxAlgebra(name = "ACE", 
+                                                                                                                       A + C + E), mxAlgebra(name = "AC", A + C), mxAlgebra(name = "hAC", 
+                                                                                                                                                                            (dzAr %x% A) + (dzCr %x% C)), expCovMZ, expCovDZ)
+  model = mxModel(model, top)
+  if (!is.null(boundDiag)) {
+    if (!is.numeric(boundDiag)) {
+      stop("boundDiag must be NULL, a value or a vector of values. You gave me a ", 
+           class(boundDiag))
+    }
+    else {
+      newLbound = model$top$matrices$a@lbound
+      if (length(boundDiag) > 1) {
+        if (length(boundDiag) != length(diag(newLbound))) {
+          stop("Typically boundDiag is 1 digit: if more, must be size of diag(a)")
+        }
+      }
+      diag(newLbound) = boundDiag
+      model$top$a$lbound = newLbound
+      model$top$c$lbound = newLbound
+      model$top$e$lbound = newLbound
+    }
+  }
+  if (addStd) {
+    newTop = mxModel(model$top, umxMatrix("I", "Iden", nVar, 
+                                          nVar), mxAlgebra(name = "Vtot", A + C + E), mxAlgebra(name = "SD", 
+                                                                                                solve(sqrt(I * Vtot))), mxAlgebra(name = "a_std", 
+                                                                                                                                  SD %*% a), mxAlgebra(name = "c_std", SD %*% c), mxAlgebra(name = "e_std", 
+                                                                                                                                                                                            SD %*% e), mxAlgebra(name = "A_std", SD %&% A), mxAlgebra(name = "C_std", 
+                                                                                                                                                                                                                                                      SD %&% C), mxAlgebra(name = "E_std", SD %&% E))
+    model = mxModel(model, newTop)
+  }
+  if (addCI) {
+    if (addStd) {
+      model = mxModel(model, mxCI(c("top.a_std", "top.c_std", 
+                                    "top.e_std")))
+    }
+    else {
+      model = mxModel(model, mxCI(c("top.a", "top.c", "top.e")))
+    }
+  }
+  model = omxAssignFirstParameters(model)
+  model = as(model, "MxModelACE")
+  model = xmu_safe_run_summary(model, autoRun = autoRun, tryHard = tryHard, std = TRUE, intervals = intervals)
+  return(model)
+}
+
+```
+
+
+how I fixed xmu_twin_print_means, EK
+```{r}
+#REDUNDANT code potentially useful in future
+# xmu_twin_print_means_EK <- function (model, digits = 3, report = c("markdown", "html")) {
+#   report = match.arg(report)
+#   int = model$top$intercept$values
+#   if (!is.null(int)) {
+#     caption = "Means and (raw) betas from model$top$intercept and model$top$meansBetas"
+#     b = model$top$meansBetas$values
+#     bcols = dim(b)[[2]]
+#     bvals = b[, 1:bcols, drop = FALSE]
+#     interceptsPerSib = dim(int)[[2]]/bcols
+#     if (interceptsPerSib == 2) {
+#       int = rbind(int, cbind(bvals, bvals))
+#     }
+#     else if (interceptsPerSib == 3) {
+#       int = rbind(int, cbind(bvals, bvals, bvals))
+#     }
+#     else {
+#       umx_msg("Polite note: email Tim as this number of means not expected")
+#     }
+#     rownames_betas <- paste(row.names(b), 'beta', sep = "_")
+#     row.names(int) = c("intercept", rownames_betas)
+#   }
+#   else {
+#     int = model$top$expMean$values
+#     if (!is.null(int)) {
+#       caption = "Means (from model$top$expMean)"
+#       row.names(int) = "intercept"
+#     }
+#     else {
+#     }
+#   }
+#   if (!is.null(int)) {
+#     umx_print(int, digits = digits, caption = caption, file = report, 
+#               append = TRUE, sortableDF = TRUE)
+#   }
+# }
+# 
+# xmu_twin_print_means <- function(model, digits = 3, report = c("markdown", "html")){
+# 	report = match.arg(report)
+# 	int = model$top$intercept$values
+# 	if(!is.null(int)){
+# 		# means and betas
+# 		caption = "Means and (raw) betas from model$top$intercept and model$top$meansBetas"
+# 		b = model$top$meansBetas$values
+# 		bcols = dim(b)[[2]]
+# 		bvals = b[,1:bcols, drop = FALSE]
+# 		interceptsPerSib = dim(int)[[2]]/bcols
+# 		if(interceptsPerSib==2){
+# 			int = rbind(int, cbind(bvals, bvals))
+# 		} else if(interceptsPerSib==3){
+# 			int = rbind(int, cbind(bvals, bvals, bvals))
+# 		}else{
+# 			umx_msg("Polite note: email package maintainer as this number of means not expected")
+# 		}
+# 		row.names(int) = c("intercept", "beta")
+# 	} else {
+# 		int = model$top$expMean$values
+# 		if(!is.null(int)){
+# 			# expMeans
+# 			caption = "Means (from model$top$expMean)"
+# 			row.names(int) = "intercept"
+# 		}else{
+# 			# no means
+# 		}
+# 	}
+# 
+# 	if(!is.null(int)){
+# 		umx_print(int, digits = digits, caption = caption, report=report, append = TRUE, sortableDF = TRUE)
+# 		# if(report == "html"){
+# 		# 	# depends on R2HTML::HTML
+# 		# 	R2HTML::HTML(int, file = "tmp.html", Border = 0, append = TRUE, sortableDF = TRUE);
+# 		# 	umx_open("tmp.html")
+# 		# }
+# 	}		
+# }
+# 
+```
+##for Data wrangling
+```{r}
+# idvar = c('famID', 'zygosity')
+# timevar = 'twinno'
+#twins_pfn_R <- reshape(ABCD_twins_pfn, v.names = var_names_long, idvar = idvar, timevar = timevar, direction = 'wide', sep = '_')
+
+# Aaron's code for repeats, gets rid of all individuals in triplet, 6 total
+# repeatedtwins <- unique(c(ABCD_twins$IID_1, ABCD_twins$IID_2)[duplicated(c(ABCD_twins$IID_1, ABCD_twins$IID_2))])
+# ABCD_twins[ABCD_twins$IID_1 %in% repeatedtwins | ABCD_twins$IID_2 %in% repeatedtwins,]
+```
+
+
+##for output
+```{r}
+#to get info from console output tables
+
+  #   paths_ACE <- umxSummary[grep("a1",summary_ACE):(grep("a1",summary_ACE)+3)]
+  # 	paths_ACE<- paths_ACE[-2]
+  # 	write.table(paths_ACE,file=paste(i,"paths_ACE",".txt",sep=""),row.names=F,col.names=F,quote=F)
+  #  paths_ACE<-read.table(paste(i, "paths_ACE",".txt",sep=""),sep="|",header=T, fill = TRUE)
+  #  unlink(paste(i, "paths_ACE",".txt",sep=""))
+  #  paths_ACE<-paths_ACE[,-1] #delete leading empty column
+
+
+
+#' # Create another covariate: cohort
+#' twinData$cohort1 = twinData$cohort2 =twinData$part
+#' mzData = twinData[twinData$zygosity %in% "MZFF", ]
+#' dzData = twinData[twinData$zygosity %in% "DZFF", ]
+#'
+#' # 1. def var approach
+#' m2 = umxACE(selDVs = "ht", selCovs = c("age", "cohort"), sep = "", dzData = dzData, mzData = mzData)
+#'
+#' # 2. Residualized approach: remove height variance accounted-for by age.
+#' FFdata = twinData[twinData$zygosity %in% c("MZFF", "DZFF"), ]
+#' FFdata = umx_residualize("ht", "age", suffixes = 1:2, data = FFdata)
+#' mzData = FFdata[FFdata$zygosity %in% "MZFF", ]
+#' dzData = FFdata[FFdata$zygosity %in% "DZFF", ]
+#' m3 = umxACE(selDVs = "ht", sep = "", dzData = dzData, mzData = mzData)
+```
+
+##FROM QDAP PACKAGE CODE - Multiple gsub
+```{r}
+#' 
+#' \code{multigsub} - A wrapper for \code{\link[base]{gsub}} that takes a vector 
+#' of search terms and a vector or single value of replacements.
+#' 
+#' @param pattern Character string to be matched in the given character vector. 
+#' @param replacement Character string equal in length to pattern or of length 
+#' one which are  a replacement for matched pattern. 
+#' @param text.var The text variable.
+#' @param leadspace logical.  If \code{TRUE} inserts a leading space in the 
+#' replacements.
+#' @param trailspace logical.  If \code{TRUE} inserts a trailing space in the 
+#' replacements.
+#' @param fixed logical. If \code{TRUE}, pattern is a string to be matched as is. 
+#' Overrides all conflicting arguments.
+#' @param trim logical.  If \code{TRUE} leading and trailing white spaces are 
+#' removed and multiple white spaces are reduced to a single white space.
+#' @param order.pattern logical.  If \code{TRUE} and \code{fixed = TRUE}, the 
+#' \code{pattern} string is sorted by number of characters to prevent substrings 
+#' replacing meta strings (e.g., \code{pattern = c("the", "then")} resorts to 
+#' search for "then" first).
+#' @param \dots Additional arguments passed to \code{\link[base]{gsub}}.
+#' @rdname multigsub
+#' @return \code{multigsub} - Returns a vector with the pattern replaced.
+#' @seealso \code{\link[base]{gsub}}
+#' @export
+#' @examples
+#' \dontrun{
+#' ## ======================
+#' ##    `mgsub` Function
+#' ## ======================
+#' 
+#' multigsub(c("it's", "I'm"), c("it is", "I am"), DATA$state)
+#' mgsub(c("it's", "I'm"), c("it is", "I am"), DATA$state)
+#' mgsub("[[:punct:]]", "PUNC", DATA$state, fixed = FALSE)
+#'
+#' ## ====================== 
+#' ## `sub_holder` Function
+#' ## ======================
+#' 
+#' ## `alpha.type` as TRUE
+#' (fake_dat <- paste(emoticon[1:11,2], DATA$state))
+#' (m <- sub_holder(emoticon[,2], fake_dat))
+#' m$unhold(strip(m$output))
+#' # With Stemming
+#' m$unhold(stemmer(strip(m$output), capitalize = FALSE))
+#' 
+#' ## `alpha.type` as FALSE (numeric keys)
+#' vowels <- LETTERS[c(1, 5, 9, 15, 21)]
+#' (m2 <- sub_holder(vowels, toupper(DATA$state), alpha.type = FALSE))
+#' m2$unhold(gsub("[^0-9]", "", m2$output))
+#' mtabulate(strsplit(m2$unhold(gsub("[^0-9]", "", m2$output)), ""))
+#' }
+multigsub <-
+function (pattern, replacement, text.var, leadspace = FALSE, 
+    trailspace = FALSE, fixed = TRUE, trim = TRUE, order.pattern = fixed, 
+    ...) {
+
+    if (leadspace | trailspace) replacement <- spaste(replacement, trailing = trailspace, leading = leadspace)
+
+    if (fixed && order.pattern) {
+        ord <- rev(order(nchar(pattern)))
+        pattern <- pattern[ord]
+        if (length(replacement) != 1) replacement <- replacement[ord]
+    }
+    if (length(replacement) == 1) replacement <- rep(replacement, length(pattern))
+   
+    for (i in seq_along(pattern)){
+        text.var <- gsub(pattern[i], replacement[i], text.var, fixed = fixed, ...)
+    }
+
+    if (trim) text.var <- gsub("\\s+", " ", gsub("^\\s+|\\s+$", "", text.var, perl=TRUE), perl=TRUE)
+    text.var
+}
+
+#' @rdname multigsub
+#' @export
+mgsub <- multigsub
+
+
+#' Multiple gsub
+#' 
+#' \code{sub_holder} - This function holds the place for particular character 
+#' values, allowing the user to manipulate the vector and then revert the place
+#' holders back to the original values.
+#' 
+#' @param alpha.type logical.  If \code{TRUE} alpha (lower case letters) are 
+#' used for the key.  If \code{FALSE} numbers are used as the key.
+#' @return \code{sub_holder} - Returns a list with the following:
+#' \item{output}{keyed place holder character vector} 
+#' \item{unhold}{A function used to revert back to the original values}
+#' @rdname multigsub
+#' @note The \code{unhold} function for \code{sub_holder} will only work on keys
+#' that have not been disturbed by subsequent alterations.  The key follows the 
+#' pattern of `qdapplaceholder` followed by lower case letter keys followed by
+#' `qdap`.
+#' @export
+sub_holder <- function(pattern, text.var, alpha.type = TRUE, ...) {
+
+    if (!is.character(pattern)) pattern <- as.character(pattern)
+    x2 <- x <- length(pattern)
+
+    if (alpha.type) {
+        counter <- 0
+        while(x > 26) {
+            x <- x/26
+            counter <- counter + 1
+        }
+        if (x > 0) counter + 1
+        keys <- paste2(expand.grid(lapply(1:counter, function(i) letters)), sep="")
+        reps <- paste0("qdapplaceholder", keys, "qdap")
+    } else {
+        keys <- reps <- 1:x
+    }
+
+    output <- mgsub(pattern, reps, text.var, ...)
+
+
+    FUN <- function(text.var, ...) {
+        mgsub(reps, pattern, text.var)
+    }
+
+    out <- list(output = output, unhold = FUN)
+
+    attributes(out) <- list(
+        class = c("sub_holder", "list"), 
+        names = names(out),
+        pattern = pattern, 
+        keys = keys, 
+        len = x2
+    )
+    out
+
+}
+
+
+#' Prints a sub_holder object
+#' 
+#' Prints a sub_holder object
+#' 
+#' @param x The sub_holder object
+#' @param \ldots ignored
+#' @export
+#' @method print sub_holder
+print.sub_holder <-
+function(x, ...) {
+    print(x[["output"]])
+}
+
+`%$%` <- function(x, n) lapply(x, `[[`, as.character(as.list(match.call())$n))
+`%c%` <- function(x, n) sapply(x, `[[`, as.character(as.list(match.call())$n))
+`%!in%` <- Negate(`%in%`)
+```
+
+## umx ACE Cholesky analysis on all networks + falconer + umxReduce compare multiple sub-models (17 + 7)
+univariate
+```{r}
+
+for(i in seq(1:length(names_pfn_all))){
+
+  selDVs<-names_pfn_all[i] #variable names to select
+  ACE_ABCD_Dev <- umxACE(selDVs = selDVs, dzData = dz, mzData = mz, sep = "_")
+  ace <- acevec(ACE_ABCD_Dev)
+	#quick and dirty extraction of submodel output table from umxReduce
+  sub<-capture.output(umxReduce(ACE_ABCD_Dev, report = c('markdown'))) #get submodel stats from text output
+  sub<-sub[grep("Model",sub):length(sub)] # grab useful bits
+	sub<-sub[-2] #eliminate "---" line
+	#save tables for each ROI as separate files
+	write.table(sub,file=paste("submodel_",selDVs,".txt",sep=""),row.names=F,col.names=F,quote=F) 
+		
+ #reread table into R, using sep to elimiate "|" delineators
+ sub<-read.table(paste("submodel_",selDVs,".txt",sep=""),sep="|",header=T, fill = TRUE)
+	sub<-sub[,-1] #delete leading empty column
+		
+ #convert 2D array into 1D vector (at least the parts dealing with hypothesis tests)
+	modname<-str_trim(sub$Model)
+	  AIC<-as.data.frame(t(unlist(sub[,which(names(sub)=="AIC")])))	
+	   		names(AIC)<-paste(modname,"AIC",sep="_")
+	   dAIC<-as.data.frame(t(unlist(sub[,which(names(sub)=="Δ.AIC")])))
+	   		names(dAIC)<-paste(modname,"dAIC",sep="_")
+	   X2<-as.data.frame(t(unlist(sub[,which(names(sub)=="Δ.Fit")])))
+	   		names(X2)<-paste(modname,"X2",sep="_")
+	   p<-as.data.frame(t(unlist(sub[,which(names(sub)=="p")])))
+	   p[] <- lapply(p, gsub, pattern = "<", replacement = "")
+	   		names(p)<-paste(modname,"ptim",sep="_")
+	   		
+	   		
+	   out<-as.data.frame(t(unlist(c(i,selDVs,ace,AIC,dAIC,X2,p))))		
+	   names(out)[1:2]<-c("i","ROI")
+	   #iteratively write output for each ROI line-by-line into a giant all-ROI output table
+	   col_names = names(out)
+	   if (i == 1){
+	   write.table(out,file="ACEoutputSubmodels.txt",row.names=F,col.names=col_names,quote=F,append=T) 
+	   } else{
+	     write.table(out,file="ACEoutputSubmodels.txt",row.names=F,col.names=F,quote=F,append=T) 
+	   }
+}
+
+
+
+```
+
+##compare AE to E, univariate
+covariates: meanFD, sex, age
+OLD
+** fix for loop to use new summary fct
+```{r}
+for(i in seq(1:length(names_pfn_all))){
+
+  selDVs<-names_pfn_all[i] #variable names to select
+  ACE_ABCD_Dev <- umxACE(selDVs = selDVs, selCovs = c("age","sex", "meanFD"),  dzData = dz, mzData = mz, sep = "_")
+  AE <- umxModify(ACE_ABCD_Dev, update = "c_r1c1", name = "AE")
+  ae_vec <- aevec(AE)
+  E <- umxModify(AE, update = "a_r1c1", name = "E")
+  sub<-capture.output(umxCompare(AE,E,report = c('markdown')))
+	#quick and dirty extraction of submodel output table from umxReduce
+  sub<-sub[grep("EP",sub):length(sub)] # grab useful bits
+	sub<-sub[-2] #eliminate "---" line
+	sub[3] <- gsub("< ", "", sub[3])
+	#save tables for each ROI as separate files
+	write.table(sub,file=paste("AE_E_",selDVs,".txt",sep=""),row.names=F,col.names=F,quote=F) 
+ #reread table into R, using sep to eliminate "|" delineators
+ sub<-read.table(paste("AE_E_",selDVs,".txt",sep=""),sep="|",header=T, fill = TRUE)
+ sub<-sub[,-1] #delete leading empty column
+ print(sub)
+ #convert 2D array into 1D vector (at least the parts dealing with hypothesis tests)
+	modname<-str_trim(sub$Model)
+	  AIC<-as.data.frame(t(unlist(sub[,which(names(sub)=="AIC")])))	
+	   		names(AIC)<-paste(modname,"AIC",sep="_")
+	   dAIC<-as.data.frame(t(unlist(sub[,which(names(sub)=="Δ.AIC")])))
+	   		names(dAIC)<-paste(modname,"dAIC",sep="_")
+	   X2<-as.data.frame(t(unlist(sub[,which(names(sub)=="Δ.Fit")])))
+	   		names(X2)<-paste(modname,"X2",sep="_")
+	   p<-as.data.frame(t(unlist(sub[,which(names(sub)=="p")])))
+	   		names(p)<-paste(modname,"ptim",sep="_")
+	
+	   out<-as.data.frame(t(unlist(c(i,selDVs,ae_vec,AIC,dAIC,X2,p))))		
+	   names(out)[1:2]<-c("i","ROI")
+	   #iteratively write output for each ROI line-by-line into a giant all-ROI output table
+	   col_names = names(out)
+	   if (i == 1){
+	   write.table(out,file="AE_E_all.txt",row.names=F,col.names=col_names,quote=F,append=T) 
+	   } else{
+	     write.table(out,file="AE_E_all.txt",row.names=F,col.names=F,quote=F,append=T) 
+	   }
+	   
+	rm(ACE_ABCD_Dev)
+  rm(AE)
+  rm(E)
+  rm(sub)
+}
+
+```
+OLD
+AE vs E with mean_FD as covariate only
+```{r}
+selCovs <- c('meanFD')
+for(i in seq(1:length(names_pfn_all))){
+
+  selDVs<-names_pfn_all[i] #variable names to select
+  ACE_ABCD_Dev <- umxACE(selDVs = selDVs,selCovs = selCovs, dzData = dz, mzData = mz, sep = "_")
+  AE <- umxModify(ACE_ABCD_Dev, update = "c_r1c1", name = "AE")
+  ae_vec <- aevec(AE)
+  E <- umxModify(AE, update = "a_r1c1", name = "E")
+  sub<-capture.output(umxCompare(AE,E,report = c('markdown')))
+	#quick and dirty extraction of submodel output table from umxReduce
+  sub<-sub[grep("EP",sub):length(sub)] # grab useful bits
+	sub<-sub[-2] #eliminate "---" line
+	sub[3] <- gsub("< ", "", sub[3])
+	#save tables for each ROI as separate files
+	write.table(sub,file=paste("AE_E_cov",".txt",sep=""),row.names=F,col.names=F,quote=F) 
+ #reread table into R, using sep to eliminate "|" delineators
+ sub<-read.table(paste("AE_E_cov",".txt",sep=""),sep="|",header=T, fill = TRUE)
+ unlink("AE_E_cov.txt")
+ sub<-sub[,-1] #delete leading empty column
+ print(sub)
+ #convert 2D array into 1D vector (at least the parts dealing with hypothesis tests)
+	modname<-str_trim(sub$Model)
+	  AIC<-as.data.frame(t(unlist(sub[,which(names(sub)=="AIC")])))	
+	   		names(AIC)<-paste(modname,"AIC",sep="_")
+	   dAIC<-as.data.frame(t(unlist(sub[,which(names(sub)=="Δ.AIC")])))
+	   		names(dAIC)<-paste(modname,"dAIC",sep="_")
+	   X2<-as.data.frame(t(unlist(sub[,which(names(sub)=="Δ.Fit")])))
+	   		names(X2)<-paste(modname,"X2",sep="_")
+	   p<-as.data.frame(t(unlist(sub[,which(names(sub)=="p")])))
+	   		names(p)<-paste(modname,"ptim",sep="_")
+	
+	   out<-as.data.frame(t(unlist(c(i,selDVs,ae_vec,AIC,dAIC,X2,p))))		
+	   names(out)[1:2]<-c("i","ROI")
+	   #iteratively write output for each ROI line-by-line into a giant all-ROI output table
+	   col_names = names(out)
+	   if (i == 1){
+	   write.table(out,file="AE_E_covs_all.txt",row.names=F,col.names=col_names,quote=F,append=T) 
+	   } else{
+	     write.table(out,file="AE_E_covs_all.txt",row.names=F,col.names=F,quote=F,append=T) 
+	   }
+	   
+	rm(ACE_ABCD_Dev)
+  rm(AE)
+  rm(E)
+  rm(sub)
+}
+```
+OLD
+
+## loading results of submodel analysis, ACE submodels & AE vs E submodels
+```{r}
+pfns_ae_vs_e_output <- read.table('AE_E_all.txt', fill = TRUE, header = T)
+pfns_ae_vs_e_covs_output <- read.table('AE_E_all_covs.txt', fill = TRUE, header = T) 
+#pfns_ace_submodels <-  read.table('ACEoutputSubmodels.txt', fill = TRUE, header = T)
+
+unimodal <- c("PFN1", "PFN2", "PFN3", "PFN4", "PFN14", "VIS", "MOT")
+heteromodal <- c("PFN5", "PFN6","PFN7", "PFN8", "PFN9", "PFN10", "PFN11", "PFN12", "PFN13", "PFN15", "PFN16", "PFN17", "FPN", "DAN", "VAN", "LIM", "DMN")
+pfns_ae_vs_e_covs_output$modality <- ifelse(pfns_ae_vs_e_covs_output$ROI %in% unimodal, "UNI", ifelse(pfns_ae_vs_e_covs_output$ROI
+                                                                                             %in% heteromodal, "HETERO", NA))
+#get PFNs where A is significant
+pfns_heritable_17 <- pull(subset(pfns_ae_vs_e_output[1:17,], E_ptim < (0.05/17)), ROI)
+pfns_heritable_17_cov <- pull(subset(pfns_ae_vs_e_covs_output[1:17,], E_ptim < (0.05/17)), ROI)
+```
