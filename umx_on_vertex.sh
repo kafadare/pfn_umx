@@ -10,8 +10,8 @@
 source /cbica/projects/bgd-pfn/.miniconda3/etc/profile.d/conda.sh
 conda activate umx-4.15
 
-#home=/cbica/projects/bgd-pfn/
-#cd $home
+home=/cbica/projects/bgd-pfn/pfn_umx/
+cd $home
 network=$1
 vertex=$2
 #vertex=$SGE_TASK_ID  #this is a special variable that is replaced with 1:n

@@ -8,7 +8,7 @@ require(stringr)
 require(dplyr)
 #require(ciftiTools)
 
-source("all_fcts.R")
+source("/cbica/projects/bgd-pfn/pfn_umx/all_fcts.R")
 #setwd('/cbica/projects/bgd-pfn/vertex_results')
 
 # assign custom fcts to the umx environment to access hidden umx fcts
@@ -79,7 +79,7 @@ ABCD_twins_vertex <- merge(ABCD_twins_pfn, col_v, by = c('subjectkey'))
 
 #reshape twins data back to paired
 
-var_names_long <- names(ABCD_twins_vertex) 
+var_names_long <- names(ABCD_twins_vertex)
 var_names_long <- var_names_long[-which(var_names_long %in% c("famID", "zygosity", "kinship", "X", "zyg"))]
 
 twins_vertex_wide <- umx_long2wide(ABCD_twins_vertex, famID = "famID", twinID = "twinno", vars2keep = var_names_long, zygosity = "zyg", passalong = c('zygosity', 'kinship', 'twinno'))
@@ -92,7 +92,7 @@ rm(var_names_long)
 scale_vars <- c('age', 'meanFD', 'numTRs')
 twins_vertex_wide <- umx_scale_wide_twin_data(varsToScale = c(name_vertex, scale_vars), sep = "_T", twins_vertex_wide, twins = 1:2)
 variance <- var(twins_vertex_wide[, paste0(name_vertex, "_T1")])
-selCovs <- c('age', 'meanFD', 'numTRs', 'sex')               
+selCovs <- c('age', 'meanFD', 'numTRs', 'sex')
 if (variance != 0) {
   dz <- twins_vertex_wide[twins_vertex_wide$zygosity == "DZ",]
   mz <- twins_vertex_wide[twins_vertex_wide$zygosity == "MZ",]
