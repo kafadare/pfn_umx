@@ -1,6 +1,6 @@
 #!/bin/sh
-#$ -N pfn1_vertex_umx
-#$ -o /cbica/projects/bgd-pfn/pfn1_vertex_output/$JOB_NAME-$JOB_ID-$TASK_ID.log
+#$ -N pfn_vertex_umx
+#$ -o /cbica/projects/bgd-pfn/pfn_vertex_output/$JOB_NAME.log
 #$ -j y
 # Set the amount of memory being requested.
 #$ -l s_vmem=10G
@@ -12,8 +12,8 @@ conda activate umx-4.15
 
 home=/cbica/projects/bgd-pfn/pfn_umx/
 cd $home
-network=$1
-vertex=$2
+#network=$1
+#vertex=$2
 #vertex=$SGE_TASK_ID  #this is a special variable that is replaced with 1:n
 
 #matlab -r "call_matlab_fct($INDEX, '/cbica/projects/bgd-pfn/pfn1_vertex_pairs.csv');quit"
