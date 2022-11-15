@@ -6,7 +6,9 @@
 for i in {1..2}
 do
 for k in {1..2}
-qsub umx_on_vertex.sh -F "network=$i, vertex=$k"
+export network = $i
+export vertex = $k
+qsub umx_on_vertex.sh -V
 sleep 30
 done
 sleep 60
