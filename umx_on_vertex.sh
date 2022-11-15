@@ -12,6 +12,7 @@ conda activate umx-4.15
 
 home=/cbica/projects/bgd-pfn/pfn_umx/
 cd $home
+printenv
 #network=$i
 #vertex=$k
 #vertex=$SGE_TASK_ID  #this is a special variable that is replaced with 1:n
