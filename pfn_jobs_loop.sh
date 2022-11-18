@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #$ -N pfn_loop
 #$ -o /cbica/projects/bgd-pfn/$JOB_NAME.log
 #$ -j y
