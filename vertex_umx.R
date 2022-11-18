@@ -67,7 +67,7 @@ pfn_no <- as.numeric(myargs[1])
 vertex_no <- as.numeric(myargs[2])
 # The first argument is the text for hobby.
 path_template1 <- "/cbica/projects/bgd-pfn/vertex_columns/V"
-path_template2 <- "_PFN"
+path_template2 <- "PFN"
 path <- paste0(path_template1, vertex_no, path_template2, pfn_no, ".csv")
 col_v <- read.csv(path, header = T, sep = ",")
 name_vertex <- names(col_v)[2]
@@ -101,7 +101,7 @@ if (variance != 0) {
   ace_Vdf <- umx_df(ace)
   ace_Vdf$vertex_no <- vertex_no
   ace_Vdf$pfn_no <- pfn_no
-  fName <- paste0("/cbica/projects/bgd-pfn/vertex_results",name_vertex, "_ace_df.csv" )
+  fName <- paste0("/cbica/projects/bgd-pfn/vertex_results/",name_vertex, "_ace_df.csv" )
   write.csv(ace_Vdf, file = fName, row.names = F, col.names = T)
 } else{
   fName_txt <- paste0(name_vertex, "_NoWork.txt" )

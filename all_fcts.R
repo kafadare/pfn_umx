@@ -1049,10 +1049,10 @@ get_dist_matrix <- function(id_df, dist_df, id_var, dist_var, na_var){
       if(i != j){
         val <- as.numeric(dist_df[which((dist_df[[id_1]] == rownames(m)[i]) & (dist_df[[id_2]] == colnames(m)[j])), distvar_no])
         #val <- as.numeric( dist_df[[dist_var]][str_detect(dist_df$pairs_str, paste(rownames(m)[i])) & str_detect(dist_df$pairs_str, paste(colnames(m)[j]))]))
-        if (length(val) == 0 | is.na(val)){  
+        if (length(val) == 0 || is.na(val)){  
           na_val <- as.numeric(dist_df[which((dist_df[[id_1]] == rownames(m)[i]) & (dist_df[[id_2]] == colnames(m)[j])), navar_no])
           #val <- as.numeric( dist_df[[dist_var]][str_detect(dist_df$pairs_str, paste(rownames(m)[i])) & str_detect(dist_df$pairs_str, paste(colnames(m)[j]))]))
-          if (length(val) == 0 | is.na(val)){  
+          if (length(val) == 0 || is.na(val)){  
             m[i,j] = 0
           }
           else{m[i,j] = na_val}

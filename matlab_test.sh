@@ -1,5 +1,5 @@
 #!/bin/sh
-#$ -N matlab_test
+#$ -N matlab
 #$ -o /cbica/projects/bgd-pfn/pfn_vertex_output/$JOB_NAME_$JOB_ID.log
 #$ -j y
 # Set the amount of memory being requested.

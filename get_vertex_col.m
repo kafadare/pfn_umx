@@ -12,9 +12,9 @@ dir_subj = dir(path);
 
 file_ext = '/IndividualParcel_Final_sbj1_comp17_alphaS21_1_alphaL300_vxInfo1_ard0_eta0/final_UV.mat';
 
-fName = sprintf('V%d_PFN%d.csv', n, k);
+fName = sprintf('V%dPFN%d.csv', n, k);
 
-colname = sprintf('V%d_PFN%d', n, k);
+colname = sprintf('V%dPFN%d', n, k);
 
 out = cell(height(twins_T), 2);
 
