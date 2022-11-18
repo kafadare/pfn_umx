@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 #$ -N pfn_vertex_umx
 #$ -o /cbica/projects/bgd-pfn/pfn_vertex_output/$JOB_NAME_$JOB_ID.log
 #$ -j y

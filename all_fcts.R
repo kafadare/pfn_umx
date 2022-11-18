@@ -1042,18 +1042,20 @@ get_dist_matrix <- function(id_df, dist_df, id_var, dist_var, na_var){
   colnames(m) <- id_df[[id_1]]
   rownames(m) <- id_df[[id_1]]
   dist_df$pairs_str <- paste(dist_df[[id_1]], dist_df[[id_2]], sep = "_")
+  distvar_no <- which(colnames(dist_df) == dist_var)
+  navar_no <- which(colnames(dist_df) == na_var)
   for(i in 1:length(m)){
     for(j in 1:length(m)){
       if(i != j){
-        val <- as.numeric(dist_df[which((dist_df[[id_1]] == rownames(m)[i]) & (dist_df[[id_2]] == colnames(m)[j])), ..dist_var])
+        val <- as.numeric(dist_df[which((dist_df[[id_1]] == rownames(m)[i]) & (dist_df[[id_2]] == colnames(m)[j])), distvar_no])
         #val <- as.numeric( dist_df[[dist_var]][str_detect(dist_df$pairs_str, paste(rownames(m)[i])) & str_detect(dist_df$pairs_str, paste(colnames(m)[j]))]))
         m[i,j] = val
         if (is.na(val)){  
-          na_val <- as.numeric(dist_df[which((dist_df[[id_1]] == rownames(m)[i]) & (dist_df[[id_2]] == colnames(m)[j])), ..na_var])
+          na_val <- as.numeric(dist_df[which((dist_df[[id_1]] == rownames(m)[i]) & (dist_df[[id_2]] == colnames(m)[j])), navar_no])
           #val <- as.numeric( dist_df[[dist_var]][str_detect(dist_df$pairs_str, paste(rownames(m)[i])) & str_detect(dist_df$pairs_str, paste(colnames(m)[j]))]))
           m[i,j] = na_val
         }
-      }else{m[i,j] = 1}
+      }else{m[i,j] = 0}
     }
   } 
   return(m)
