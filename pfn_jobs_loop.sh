@@ -11,7 +11,7 @@ matlab -r "get_vertex_col($i,$k);quit"
 qsub umx_on_vertex.sh  "$i" "$k"
 file="V"
 file+="$i"
-file+="_PFN$2.csv"
+file+="_PFN$k.csv"
 rm $file
 sleep 30
 done

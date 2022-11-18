@@ -16,5 +16,5 @@ k=$2
 # Load and unload modules needed to run your code
 #module load matlab
 # Run matlab script
-matlab -r "call_matlab_fct($1, '/cbica/projects/bgd-pfn/pfn1_vertex_pairs.csv');quit"
-#matlab -r "get_vertex_col($n,$k);quit"
+#matlab -r "call_matlab_fct($1, '/cbica/projects/bgd-pfn/pfn1_vertex_pairs.csv');quit"
+matlab -r "get_vertex_col($n,$k);quit"
