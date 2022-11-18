@@ -8,11 +8,14 @@ do
 for k in {1..1}
 do
 qsub matlab_test.sh "$i" "$k"
-qsub umx_on_vertex.sh  "$i" "$k"
-file="V"
+file="/cbica/projects/bgd-pfn/vertex_columns/V"
 file+="$i"
 file+="_PFN$k.csv"
-rm $file
+while [ ! -f $file]; # true if /your/file does not exist
+do
+  sleep 1
+done
+qsub umx_on_vertex.sh "$i" "$k"
 sleep 30
 done
 sleep 60
