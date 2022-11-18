@@ -3,10 +3,10 @@
 #$ -o /cbica/projects/bgd-pfn/$JOB_NAME.log
 #$ -j y
 #n_pfn = $1
-#n_vertex = $2
+#n_vertex = $2 == 59412
 for i in {1..1}
 do
-for k in {1..1}
+for k in {1..59412}
 do
 qsub matlab_test.sh "$i" "$k"
 file="/cbica/projects/bgd-pfn/vertex_columns/V"
