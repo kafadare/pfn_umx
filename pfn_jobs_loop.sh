@@ -12,9 +12,9 @@ qsub matlab_test.sh "$i" "$k"
 file="/cbica/projects/bgd-pfn/vertex_columns/V"
 file+="$i"
 file+="PFN$k.csv"
-while [ ! -f $file]; # true if /your/file does not exist
+while [ ! -f $file ]; # true if /your/file does not exist
 do
-  sleep 1
+  sleep 1;
 done
 qsub umx_on_vertex.sh "$i" "$k"
 sleep 30
