@@ -2,11 +2,11 @@
 #$ -N pfn_loop
 #$ -o /cbica/projects/bgd-pfn/$JOB_NAME.log
 #$ -j y
-n_pfn = $1
-n_vertex = $2
-for i in {1..$n_pfn}
+#n_pfn = $1
+#n_vertex = $2
+for i in {1..1}
 do
-for k in {1..$n_vertex}
+for k in {1..1}
 do
 qsub matlab_test.sh "$i" "$k"
 file="/cbica/projects/bgd-pfn/vertex_columns/V"
