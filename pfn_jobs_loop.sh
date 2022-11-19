@@ -9,9 +9,9 @@ do
 for k in {1..3}
 do
 qsub matlab_test.sh "$i" "$k"
-file="/cbica/projects/bgd-pfn/vertex_columns/V"
+file="/cbica/projects/bgd-pfn/vertex_columns/PFN"
 file+="$i"
-file+="PFN$k.csv"
+file+="V$k.csv"
 while [ ! -f $file ]; # true if /your/file does not exist
 do
   sleep 2;

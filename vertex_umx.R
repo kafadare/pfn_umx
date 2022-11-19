@@ -66,9 +66,9 @@ myargs = commandArgs(trailingOnly=TRUE)
 pfn_no <- as.numeric(myargs[1])
 vertex_no <- as.numeric(myargs[2])
 # The first argument is the text for hobby.
-path_template1 <- "/cbica/projects/bgd-pfn/vertex_columns/V"
-path_template2 <- "PFN"
-path <- paste0(path_template1, vertex_no, path_template2, pfn_no, ".csv")
+path_template1 <- "/cbica/projects/bgd-pfn/vertex_columns/PFN"
+path_template2 <- "V"
+path <- paste0(path_template1, pfn_no, path_template2, vertex_no, ".csv")
 col_v <- read.csv(path, header = T, sep = ",")
 name_vertex <- names(col_v)[2]
 print(name_vertex)
