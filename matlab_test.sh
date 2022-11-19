@@ -3,7 +3,7 @@
 #$ -o /cbica/projects/bgd-pfn/pfn_vertex_output/$JOB_NAME_$JOB_ID.log
 #$ -j y
 # Set the amount of memory being requested.
-#$ -l h_vmem=8G
+#$ -l s_vmem=8G
 
 # Source the project-user’s miniconda setup
 source /cbica/projects/bgd-pfn/.miniconda3/etc/profile.d/conda.sh
