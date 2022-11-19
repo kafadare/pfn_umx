@@ -3,7 +3,7 @@
 #$ -o /cbica/projects/bgd-pfn/pfn_vertex_output/$JOB_NAME_$JOB_ID.log
 #$ -j y
 # Set the amount of memory being requested.
-#$ -l s_vmem=10G
+#$ -l h_vmem=15G
 
 #submit this with something like the following command
 #qsub -t 1:n cubicscriptdraft.sh
