@@ -24,7 +24,7 @@ subj_no = extractAfter(subj,"NDAR_INV");
 filepath = strcat(path, '/sub-NDARINV', subj_no, file_ext);
 struct = load(filepath);
 out{i,1} = subj;
-out{i,2} = struct.V{1}(n,k);
+out{i,2} = struct.V{1}(k,n); % first column vertex, second column PFN no
 end
 
 cd  '/cbica/projects/bgd-pfn/vertex_columns';

@@ -4,20 +4,20 @@
 #$ -j y
 #n_pfn = $1
 #n_vertex = $2 == 59412
-for i in {1..1}
+for n in {1..1}
 do
-for k in {1..3}
+for k in {1..20}
 do
-qsub matlab_test.sh "$i" "$k"
+qsub matlab_test.sh "$n" "$k"
 file="/cbica/projects/bgd-pfn/vertex_columns/PFN"
-file+="$i"
+file+="$n"
 file+="V$k.csv"
 while [ ! -f $file ]; # true if /your/file does not exist
 do
   sleep 2;
 done
 sleep 1;
-qsub umx_on_vertex.sh "$i" "$k"
+qsub umx_on_vertex.sh "$n" "$k"
 sleep 30
 done
 sleep 60

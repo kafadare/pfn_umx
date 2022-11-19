@@ -105,9 +105,9 @@ if (variance != 0) {
   write.csv(ace_Vdf, file = fName, row.names = F, col.names = T)
 } else{
   fName_txt <- paste0(name_vertex, "_NoWork.txt" )
-  error <- paste0("Variance of", name_vertex, "after scaling is ", variance, " . This is < 0.1, so we're running umx, aborting script.")
+  error <- paste0("Variance of", name_vertex, "after scaling is ", variance, " . This is < 0.1, so we're NOT running umx, aborting script.")
   writeLines(error, fName_txt)
-  stop(paste0("Variance of phenotype after scaling is ", variance, " . This is < 0.1, so we're running umx, aborting script."), call. = FALSE)
+  stop(paste0("Variance of phenotype after scaling is ", variance, " . This is < 0.1, so we're running NOT umx, aborting script."), call. = FALSE)
 }
 
 unlink(path)
