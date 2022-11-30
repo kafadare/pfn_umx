@@ -119,8 +119,9 @@ if (exists("pfn_no") & exists("vertex_no")) {
   vertex_no <- as.numeric(myargs[2])
   ace_Vdf = vertex_umx_fct(pfn_no, vertex_no)
 } else {
+  myargs = commandArgs(trailingOnly=TRUE)
   stop(" Usage: vertex_umx.R <alignment.fasta> <tree.nex> <output.txt>", call.=FALSE)
 }
-cat("You ran the program with ", args,"\n")
+cat("You ran the program with ", myargs,"\n")
 
 
