@@ -84,11 +84,11 @@ vertex_umx_fct <- function(pfn_no, vertex_no) {
   rm(var_names_long)
   
   #scale trait variable as well as numerical covars :)
-  scale_vars <- c('age', 'meanFD', 'numTRs')
-  twins_vertex_wide <- umx_scale_wide_twin_data(varsToScale = c(name_vertex, scale_vars), sep = "_T", twins_vertex_wide, twins = 1:2)
   variance <- var(twins_vertex_wide[, paste0(name_vertex, "_T1")])
   selCovs <- c('age', 'meanFD', 'numTRs', 'sex')
   if (variance != 0) {
+    scale_vars <- c('age', 'meanFD', 'numTRs')
+    twins_vertex_wide <- umx_scale_wide_twin_data(varsToScale = c(name_vertex, scale_vars), sep = "_T", twins_vertex_wide, twins = 1:2)
     dz <- twins_vertex_wide[twins_vertex_wide$zygosity == "DZ",]
     mz <- twins_vertex_wide[twins_vertex_wide$zygosity == "MZ",]
     ace <- umx_modelCompare(ROI_all = name_vertex, mz = mz, dz = dz, sep = "_T", tryHard = "no", selCovs = selCovs)
