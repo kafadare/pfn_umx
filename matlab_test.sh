@@ -10,11 +10,13 @@ source /cbica/projects/bgd-pfn/.miniconda3/etc/profile.d/conda.sh
 conda activate umx-4.15
 # Input arguments
 n=$1
-k=$2
+#n_end=$2
+k_start=$2
+k_end=$3
 #OUTDIR=$3
 
 # Load and unload modules needed to run your code
 #module load matlab
 # Run matlab script
 #matlab -r "call_matlab_fct($1, '/cbica/projects/bgd-pfn/pfn1_vertex_pairs.csv');quit"
-matlab -r "get_vertex_col($n,$k);quit"
+matlab -r "get_vertex_col($n, $k_start, $k_end);quit"
