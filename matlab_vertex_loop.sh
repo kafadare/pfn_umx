@@ -7,7 +7,7 @@
 
 for ((n=$1; n<=$2; n++))
 do
-  $k_start=(1)
+  let k_start=(1)
   for  ((k=$3; k<=$4; k+=1000))
   do
     let k_end=$k
