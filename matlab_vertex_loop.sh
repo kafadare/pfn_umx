@@ -1,5 +1,5 @@
 #!/bin/bash
-#$ -N pfn_loop
+#$ -N matlab_vertex_loop
 #$ -o /cbica/projects/bgd-pfn/$JOB_NAME.log
 #$ -j y
 #n_pfn = $1
