@@ -13,12 +13,12 @@ do
     let k_end=$k
     if (($k_end>59412));
     then
-      let $k_end=59412
-      print $n $k_start $k_end $k
+      let k_end=59412
+      echo $n $k_start $k_end $k
       qsub matlab_test.sh "$n" "$k_start" "$k_end"
       break
     fi
     qsub matlab_test.sh "$n" "$k_start" "$k_end"
-    let $k_start=$k_end++
+    let k_start=$k_end++
   done
 done
