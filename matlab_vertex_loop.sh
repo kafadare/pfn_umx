@@ -7,18 +7,18 @@
 
 for ((n=$1; n<=$2; n++))
 do
-  let k_start=(1)
-  for  ((k=$3; k<=$4; k+=1000))
-  do
-    let k_end=$k
-    if (($k_end>(59412)));
-    then
-      let k_end=(59412)
-      echo "n $n k start $k_start k end $k_end k $k"
-      qsub matlab_test.sh "$n" "$k_start" "$k_end"
-      break
-    fi
-    qsub matlab_test.sh "$n" "$k_start" "$k_end"
-    let k_start=($k_end++)
-  done
+  # let k_start=(1)
+  # for  ((k=$3; k<=$4; k+=1000))
+  # do
+  #   let k_end=$k
+  #   if (($k_end>(59412)));
+  #   then
+  #     let k_end=(59412)
+      echo "n $n k start $3 k end $4"
+      qsub matlab_test.sh "$n" "$3" "$4"
+  #     break
+  #   fi
+  #   qsub matlab_test.sh "$n" "$k_start" "$k_end"
+  #   let k_start=($k_end+1)
+  # done
 done
